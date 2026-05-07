@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: percentage-calc-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rbac_user
+      POSTGRES_PASSWORD: rbac_password
+      POSTGRES_DB: percentage_calc
+    ports:
+      - "5440:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/database/init.sql:/docker-entrypoint-initdb.d/01_init.sql
+      - ./backend/database/settings.sql:/docker-entrypoint-initdb.d/02_settings.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rbac_user -d percentage_calc"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

@@ -1,0 +1,96 @@
+const pool = require('../config/database');
+
+const getAllShareholders = async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM shareholders ORDER BY is_priority DESC, name ASC');
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Get shareholders error:', error);
+    res.status(500).json({ error: 'Failed to fetch shareholders' });
+  }
+};
+
+const createShareholder = async (req, res) => {
+  try {
+    const { name, email, share_percentage, is_priority } = req.body;
+    
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+
+    const result = await pool.query(
+      'INSERT INTO shareholders (name, email, share_percentage, is_priority) VALUES ($1, $2, $3, $4) RETURNING *',
+      [name, email || null, share_percentage || 0, is_priority || false]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Create shareholder error:', error);
+    res.status(500).json({ error: 'Failed to create shareholder' });
+  }
+};
+
+const updateShareholder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, email, share_percentage, is_priority, is_active } = req.body;
+    
+    const updates = [];
+    const values = [];
+    let count = 1;
+    
+    if (name !== undefined) { updates.push(`name = $${count++}`); values.push(name); }
+    if (email !== undefined) { updates.push(`email = $${count++}`); values.push(email); }
+    if (share_percentage !== undefined) { updates.push(`share_percentage = $${count++}`); values.push(share_percentage); }
+    if (is_priority !== undefined) { updates.push(`is_priority = $${count++}`); values.push(is_priority); }
+    if (is_active !== undefined) { updates.push(`is_active = $${count++}`); values.push(is_active); }
+    
+    if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+    
+    values.push(id);
+    const result = await pool.query(
+      `UPDATE shareholders SET ${updates.join(', ')} WHERE id = $${count} RETURNING *`,
+      values
+    );
+    
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Shareholder not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Update shareholder error:', error);
+    res.status(500).json({ error: 'Failed to update shareholder' });
+  }
+};
+
+// NEW: Delete Shareholder Function
+const deleteShareholder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const result = await pool.query(
+      'DELETE FROM shareholders WHERE id = $1 RETURNING *',
+      [id]
+    );
+    
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Shareholder not found' });
+    }
+    
+    res.json({ message: 'Shareholder deleted successfully', deleted: result.rows[0] });
+  } catch (error) {
+    console.error('Delete shareholder error:', error);
+    
+    // Check for PostgreSQL Foreign Key Violation (Error Code 23503)
+    // This happens if the shareholder is already linked to a historical ledger distribution
+    if (error.code === '23503') {
+      return res.status(400).json({ 
+        error: 'Cannot delete shareholder because they have existing historical payouts. Please edit them and set their status to "Inactive" instead.' 
+      });
+    }
+    
+    res.status(500).json({ error: 'Failed to delete shareholder' });
+  }
+};
+
+module.exports = { 
+  getAllShareholders, 
+  createShareholder, 
+  updateShareholder, 
+  deleteShareholder 
+};
