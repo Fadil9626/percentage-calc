@@ -118,10 +118,20 @@ const MetricCard = ({ title, value, subtitle, icon, colorClass }) => (
     <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 ${colorClass}`}>
       {icon}
     </div>
-    <div>
-      <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">{title}</p>
-      <p className="text-2xl font-black text-slate-800 dark:text-slate-100">{value}</p>
-      {subtitle && <p className="text-xs font-semibold text-slate-400 mt-1">{subtitle}</p>}
+    {/* min-w-0 is load-bearing: a flex item defaults to min-width:auto, so
+        without it this refuses to shrink below its content and a long figure
+        like LE1,247,748.00 runs past the card's padding and is clipped by the
+        rounded corner. */}
+    <div className="min-w-0 flex-1">
+      <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1 truncate">{title}</p>
+      {/* Money is never truncated — an amount missing its last digits is worse
+          than a smaller one. The size steps down on narrower cards and the
+          value wraps as a last resort. */}
+      <p className="text-xl xl:text-[1.375rem] 2xl:text-2xl font-black text-slate-800 dark:text-slate-100 leading-tight tabular-nums break-words"
+        title={typeof value === 'string' ? value : undefined}>
+        {value}
+      </p>
+      {subtitle && <p className="text-xs font-semibold text-slate-400 mt-1 truncate">{subtitle}</p>}
     </div>
   </div>
 );
