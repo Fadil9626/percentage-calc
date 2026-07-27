@@ -158,13 +158,14 @@ const ShareholdersTab = () => {
           <span className="text-indigo-500 text-lg mt-0.5">ℹ️</span>
           <div>
             <p className="text-xs font-bold uppercase tracking-wider text-indigo-800 dark:text-indigo-300 mb-0.5">
-              Share % and Of Profit are different numbers
+              How the waterfall splits
             </p>
             <p className="text-xs font-medium text-indigo-700/80 dark:text-indigo-300/80 leading-relaxed">
-              Priority shareholders take {priorityPct.toFixed(2)}% off the top, so standard shareholders divide
-              the remaining {(100 - priorityPct).toFixed(2)}% between them. A standard shareholder set to 15%
-              therefore receives {(15 / (standardPct || 100) * (100 - priorityPct)).toFixed(2)}% of net profit.
-              <strong className="font-bold"> Of Profit</strong> is the figure that reaches their account.
+              Priority shareholders take {priorityPct.toFixed(2)}% off the top. Standard shareholders then share
+              the remaining {(100 - priorityPct).toFixed(2)}% by their exact percentages —
+              so 15% of the pool works out to {(15 / (standardPct || 100) * (100 - priorityPct)).toFixed(2)}% of
+              total net profit. <strong className="font-bold">Share %</strong> is the agreed split of the pool;
+              <strong className="font-bold"> Of Profit</strong> is the same split expressed against the whole.
             </p>
           </div>
         </div>
@@ -210,7 +211,7 @@ const ShareholdersTab = () => {
           <table className="w-full text-sm text-left">
             <thead className="bg-white/40 dark:bg-slate-800/40 border-b border-white/40 dark:border-slate-700/30">
               <tr>
-                {['Name','Contact / Status','Share %','Of Profit','Tier','Actions'].map(h => (
+                {['Name','Contact / Status','Share % (of pool)','Of Total Profit','Tier','Actions'].map(h => (
                   <th key={h} className={`px-5 py-3 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 ${h === 'Actions' ? 'text-right' : ''}`}>
                     {h}
                   </th>
@@ -263,8 +264,9 @@ const ShareholdersTab = () => {
                           <div className={`h-1 rounded-full ${barColor}`} style={{ width: `${Math.min(effPct(s), 100)}%` }} />
                         </div>
                         {!s.is_priority && Math.abs(effPct(s) - parseFloat(s.share_percentage || 0)) > 0.005 && (
-                          <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 whitespace-nowrap" title="Diluted by the priority partner's share, which comes off the top">
-                            diluted
+                          <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500 whitespace-nowrap"
+                            title={`${parseFloat(s.share_percentage || 0).toFixed(2)}% of the ${(100 - priorityPct).toFixed(2)}% remaining after the priority share`}>
+                            of pool
                           </span>
                         )}
                       </div>
