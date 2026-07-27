@@ -1,4 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
+const { calculateDistribution, validateShares } = require('../utils/distribution');
 const pool = require('../config/database');
 
 /**
@@ -245,123 +246,139 @@ const updateLedgerTotals = async (ledger_id) => {
  * Applies waterfall logic: Priority partners get full percentage, then remaining profit distributed
  */
 const closeLedger = async (req, res) => {
+  const client = await pool.connect();
   try {
     const { id } = req.params;
+    await client.query('BEGIN');
 
-    // Check if ledger exists and is open
-    const ledgerCheck = await pool.query(
-      'SELECT * FROM ledgers WHERE id = $1',
-      [id]
-    );
-
+    // FOR UPDATE, and the status check inside the transaction: two admins
+    // clicking Close at once previously both read status='OPEN' outside any
+    // transaction, both passed the check, and both inserted a full set of
+    // distribution rows against the same ledger.
+    const ledgerCheck = await client.query('SELECT * FROM ledgers WHERE id = $1 FOR UPDATE', [id]);
     if (ledgerCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Ledger not found' });
     }
 
     const ledger = ledgerCheck.rows[0];
-
     if (ledger.status === 'CLOSED') {
+      await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Ledger is already closed' });
     }
 
-    // Get all active shareholders with their share percentages
-    const usersResult = await pool.query(
+    const usersResult = await client.query(
       'SELECT id, name, share_percentage, is_priority FROM shareholders WHERE is_active = true ORDER BY is_priority DESC, name ASC'
     );
-
     const partners = usersResult.rows;
 
-    // Waterfall distribution logic
-    const distributions = [];
-    let remainingProfit = ledger.net_profit;
-
-    // First pass: Priority partners get their full percentage
-    for (const partner of partners) {
-      if (partner.is_priority && parseFloat(partner.share_percentage) > 0) {
-        const share = (ledger.net_profit * parseFloat(partner.share_percentage)) / 100;
-        distributions.push({
-          shareholder_id: partner.id,
-          shareholder_name: partner.name,
-          share_percentage: parseFloat(partner.share_percentage),
-          net_profit_share: share,
-        });
-        remainingProfit -= share;
-      }
-    }
-
-    // Second pass: Non-priority partners share the remaining profit based on their flat percentages
-    const nonPriorityPartners = partners.filter(p => !p.is_priority && parseFloat(p.share_percentage) > 0);
-
-    if (remainingProfit > 0) {
-      for (const partner of nonPriorityPartners) {
-        // Apply their percentage directly to the REMAINING profit pool (divided by 100)
-        const share = (remainingProfit * parseFloat(partner.share_percentage)) / 100;
-        
-        distributions.push({
-          shareholder_id: partner.id,
-          shareholder_name: partner.name,
-          share_percentage: parseFloat(partner.share_percentage),
-          net_profit_share: share,
-        });
-      }
-    }
-
-    // Start transaction to ensure atomicity
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      // Close ledger
-      await client.query(
-        'UPDATE ledgers SET status = $1, closed_by = $2, closed_at = $3 WHERE id = $4',
-        ['CLOSED', req.user.id, new Date(), id]
-      );
-
-      // Record distribution ledger
-      const distributionData = {
-        net_profit: ledger.net_profit,
-        total_income: ledger.total_income,
-        total_expense: ledger.total_expense,
-        distributions: distributions,
-        calculation_date: new Date().toISOString(),
-      };
-
-      const distLedgerResult = await client.query(
-        'INSERT INTO distribution_ledger (ledger_id, distribution_data, calculated_by) VALUES ($1, $2, $3) RETURNING id',
-        [id, JSON.stringify(distributionData), req.user.id]
-      );
-
-      const distribution_ledger_id = distLedgerResult.rows[0].id;
-
-      // Insert individual distributions
-      for (const dist of distributions) {
-        await client.query(
-          'INSERT INTO distributions (distribution_ledger_id, shareholder_id, share_percentage, net_profit_share) VALUES ($1, $2, $3, $4)',
-          [distribution_ledger_id, dist.shareholder_id, dist.share_percentage, dist.net_profit_share]
-        );
-      }
-
-      await client.query('COMMIT');
-
-      res.json({
-        message: 'Ledger closed and distributions calculated',
-        ledger: {
-          ...ledger,
-          status: 'CLOSED',
-          closed_by: req.user.id,
-          closed_at: new Date(),
-        },
-        distributions: distributionData,
-      });
-    } catch (err) {
+    // Refuse to close on a shareholder set that cannot distribute the profit
+    // exactly. Closing is effectively irreversible for the partners who get
+    // paid off it, so a misconfiguration must stop here rather than quietly
+    // pay out the wrong amounts.
+    const validation = validateShares(partners);
+    if (!validation.ok) {
       await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
+      return res.status(400).json({
+        error: 'Cannot close: shareholder percentages are not valid',
+        details: validation.errors,
+        priority_total: validation.priorityTotal,
+        non_priority_total: validation.nonPriorityTotal,
+      });
     }
+
+    const calc = calculateDistribution(ledger.net_profit, partners);
+    const distributions = calc.distributions;
+
+    // Belt and braces: the maths guarantees this, and if it ever stops being
+    // true we would rather fail loudly than pay it out.
+    if (Math.abs(calc.residual) > 0.01) {
+      await client.query('ROLLBACK');
+      return res.status(500).json({
+        error: 'Distribution does not balance — ledger not closed',
+        net_profit: calc.net_profit,
+        allocated: calc.allocated,
+        residual: calc.residual,
+      });
+    }
+
+    await client.query(
+      'UPDATE ledgers SET status = $1, closed_by = $2, closed_at = $3 WHERE id = $4',
+      ['CLOSED', req.user.id, new Date(), id]
+    );
+
+    const distributionData = {
+      net_profit: calc.net_profit,
+      total_income: ledger.total_income,
+      total_expense: ledger.total_expense,
+      allocated: calc.allocated,
+      distributions,
+      calculation_date: new Date().toISOString(),
+    };
+
+    const distLedgerResult = await client.query(
+      'INSERT INTO distribution_ledger (ledger_id, distribution_data, calculated_by) VALUES ($1, $2, $3) RETURNING id',
+      [id, JSON.stringify(distributionData), req.user.id]
+    );
+    const distribution_ledger_id = distLedgerResult.rows[0].id;
+
+    for (const dist of distributions) {
+      await client.query(
+        'INSERT INTO distributions (distribution_ledger_id, shareholder_id, share_percentage, net_profit_share) VALUES ($1, $2, $3, $4)',
+        [distribution_ledger_id, dist.shareholder_id, dist.share_percentage, dist.net_profit_share]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    res.json({
+      message: 'Ledger closed and distributions calculated',
+      ledger: { ...ledger, status: 'CLOSED', closed_by: req.user.id, closed_at: new Date() },
+      distributions: distributionData,
+    });
   } catch (error) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
     console.error('Close ledger error:', error);
     res.status(500).json({ error: 'Failed to close ledger' });
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * GET /ledgers/:id/close-preview — what closing this ledger would pay out.
+ * Closing is irreversible in practice, so the admin gets to see every partner's
+ * amount, the allocated total and any validation problem BEFORE committing.
+ */
+const previewClose = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const ledgerResult = await pool.query('SELECT * FROM ledgers WHERE id = $1', [id]);
+    if (ledgerResult.rows.length === 0) return res.status(404).json({ error: 'Ledger not found' });
+    const ledger = ledgerResult.rows[0];
+
+    const partners = (await pool.query(
+      'SELECT id, name, share_percentage, is_priority FROM shareholders WHERE is_active = true ORDER BY is_priority DESC, name ASC'
+    )).rows;
+
+    const validation = validateShares(partners);
+    const calc = calculateDistribution(ledger.net_profit, partners);
+
+    res.json({
+      ledger_id: ledger.id,
+      status: ledger.status,
+      total_income: ledger.total_income,
+      total_expense: ledger.total_expense,
+      net_profit: calc.net_profit,
+      allocated: calc.allocated,
+      residual: calc.residual,
+      can_close: validation.ok && ledger.status !== 'CLOSED',
+      validation,
+      distributions: calc.distributions,
+    });
+  } catch (error) {
+    console.error('Preview close error:', error);
+    res.status(500).json({ error: 'Failed to preview distribution' });
   }
 };
 
@@ -371,13 +388,16 @@ const closeLedger = async (req, res) => {
 const getDistributions = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT 
+      `SELECT
         d.*,
         s.name as shareholder_name,
         dl.ledger_id,
         dl.id as distribution_ledger_id,
         l.month,
         l.label as ledger_label,
+        l.total_income,
+        l.total_expense,
+        l.net_profit,
         dl.distribution_data
        FROM distributions d
        JOIN shareholders s ON d.shareholder_id = s.id
@@ -533,6 +553,7 @@ module.exports = {
   updateTransaction,
   updateLedgerTotals,
   closeLedger,
+  previewClose,
   getDistributions,
   deleteDistribution,
   getAllLedgers,

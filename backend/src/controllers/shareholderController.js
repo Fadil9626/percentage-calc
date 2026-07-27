@@ -1,5 +1,16 @@
 const pool = require('../config/database');
 
+// A share percentage is money. Nothing checked this before, so a typo of 600
+// instead of 60 would be stored and paid out.
+const validatePercentage = (v) => {
+  if (v === undefined || v === null || v === '') return null;   // optional; defaults to 0
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 'Share percentage must be a number';
+  if (n < 0) return 'Share percentage cannot be negative';
+  if (n > 100) return 'Share percentage cannot exceed 100';
+  return null;
+};
+
 const getAllShareholders = async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM shareholders ORDER BY is_priority DESC, name ASC');
@@ -15,6 +26,9 @@ const createShareholder = async (req, res) => {
     const { name, email, share_percentage, is_priority } = req.body;
     
     if (!name) return res.status(400).json({ error: 'Name is required' });
+
+    const pctError = validatePercentage(share_percentage);
+    if (pctError) return res.status(400).json({ error: pctError });
 
     const result = await pool.query(
       'INSERT INTO shareholders (name, email, share_percentage, is_priority) VALUES ($1, $2, $3, $4) RETURNING *',
@@ -38,7 +52,11 @@ const updateShareholder = async (req, res) => {
     
     if (name !== undefined) { updates.push(`name = $${count++}`); values.push(name); }
     if (email !== undefined) { updates.push(`email = $${count++}`); values.push(email); }
-    if (share_percentage !== undefined) { updates.push(`share_percentage = $${count++}`); values.push(share_percentage); }
+    if (share_percentage !== undefined) {
+      const pctError = validatePercentage(share_percentage);
+      if (pctError) return res.status(400).json({ error: pctError });
+      updates.push(`share_percentage = $${count++}`); values.push(share_percentage);
+    }
     if (is_priority !== undefined) { updates.push(`is_priority = $${count++}`); values.push(is_priority); }
     if (is_active !== undefined) { updates.push(`is_active = $${count++}`); values.push(is_active); }
     

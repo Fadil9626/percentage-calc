@@ -22,10 +22,17 @@ router.delete('/:ledger_id/transactions/:id', authenticateToken, requireRole(['D
 // Data Entry and Admin can edit transactions
 router.patch('/:ledger_id/transactions/:id', authenticateToken, requireRole(['DATA_ENTRY', 'ADMIN']), ledgerController.updateTransaction);
 
+// Admin only - preview what closing would pay out, before committing to it
+router.get('/:id/close-preview', authenticateToken, requireRole(['ADMIN']), ledgerController.previewClose);
+
 // Admin only - Close ledger and calculate distributions
 router.post('/:id/close', authenticateToken, requireRole(['ADMIN']), ledgerController.closeLedger);
 
-// All authenticated users can view distributions (with role-based filtering)
+// Admin only. The old comment here claimed "all authenticated users, with
+// role-based filtering" — there is no filtering in the query, so opening this
+// up would show every partner every other partner's earnings. Partner access
+// needs a shareholder-scoped endpoint, which needs a users->shareholders link
+// the schema doesn't have yet.
 router.get('/distributions', authenticateToken, requireRole(['ADMIN']), ledgerController.getDistributions);
 
 // Admin only - delete a distribution and reopen the ledger
