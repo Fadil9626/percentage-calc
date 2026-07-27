@@ -113,22 +113,34 @@ const BreakdownDonut = ({ data, total, symbol }) => {
 };
 
 /* ── Glassy Metric Card Component ── */
+// Size the figure from its own length so it always fits on one line.
+// A quarter-width card leaves roughly 250px for the value; at font-black a
+// digit is about 0.8x the font size, so 14 characters need ~20px type and
+// 18 characters need ~17px. Stepping the size beats wrapping or clipping.
+const valueSize = (value) => {
+  const len = String(value ?? '').length;
+  if (len <= 10) return 'text-2xl';
+  if (len <= 13) return 'text-xl';
+  if (len <= 16) return 'text-lg';
+  if (len <= 20) return 'text-base';
+  return 'text-sm';
+};
+
 const MetricCard = ({ title, value, subtitle, icon, colorClass }) => (
-  <div className="bg-white/60 dark:bg-slate-900/60 backdrop-blur-2xl border border-white/60 dark:border-slate-700/50 rounded-[2rem] shadow-lg shadow-slate-200/5 dark:shadow-none p-6 flex items-center gap-5 transition-all duration-300 hover:bg-white/80 dark:hover:bg-slate-900/80 hover:-translate-y-1">
-    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 ${colorClass}`}>
+  <div className="bg-white/60 dark:bg-slate-900/60 backdrop-blur-2xl border border-white/60 dark:border-slate-700/50 rounded-[2rem] shadow-lg shadow-slate-200/5 dark:shadow-none p-5 flex items-center gap-4 transition-all duration-300 hover:bg-white/80 dark:hover:bg-slate-900/80 hover:-translate-y-1">
+    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${colorClass}`}>
       {icon}
     </div>
     {/* min-w-0 is load-bearing: a flex item defaults to min-width:auto, so
-        without it this refuses to shrink below its content and a long figure
-        like LE1,247,748.00 runs past the card's padding and is clipped by the
-        rounded corner. */}
+        without it this refuses to shrink below its content and the figure runs
+        past the card's padding to be clipped by the rounded corner. */}
     <div className="min-w-0 flex-1">
       <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1 truncate">{title}</p>
-      {/* Money is never truncated — an amount missing its last digits is worse
-          than a smaller one. The size steps down on narrower cards and the
-          value wraps as a last resort. */}
-      <p className="text-xl xl:text-[1.375rem] 2xl:text-2xl font-black text-slate-800 dark:text-slate-100 leading-tight tabular-nums break-words"
-        title={typeof value === 'string' ? value : undefined}>
+      {/* One line, always. Money must not be truncated (an amount missing its
+          last digits is worse than a smaller one) and must not wrap (a lone
+          trailing "0" on its own line reads as broken), so the type is sized
+          from the length of the value instead. */}
+      <p className={`${valueSize(value)} font-black text-slate-800 dark:text-slate-100 leading-tight tabular-nums whitespace-nowrap`}>
         {value}
       </p>
       {subtitle && <p className="text-xs font-semibold text-slate-400 mt-1 truncate">{subtitle}</p>}
