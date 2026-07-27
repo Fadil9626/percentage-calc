@@ -35,6 +35,83 @@ const CustomTooltip = ({ active, payload, formatCurrency }) => {
   return null;
 };
 
+// A donut's centre has room for about six characters. Dividing by 1000
+// unconditionally turns 1.2 million into "1247.7k", which is what the stray
+// glyph in the middle of the chart actually was; step the unit instead.
+const compact = (n) => {
+  const v = Math.abs(n);
+  if (v >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (v >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (v >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
+  return n.toFixed(0);
+};
+
+/* ── Breakdown donut ──────────────────────────────────────────────────────────
+ * The centre doubles as the readout: hovering a segment replaces the total with
+ * that segment's name, amount and share. There is deliberately no floating
+ * tooltip — Recharts anchors one to the cursor, which on a donut sits directly
+ * over the hole, so it rendered on top of the total and made both unreadable.
+ */
+const BreakdownDonut = ({ data, total, symbol }) => {
+  const [active, setActive] = useState(null);
+  const slice = active !== null ? data[active] : null;
+  const share = slice && total > 0 ? (slice.value / total) * 100 : 0;
+
+  return (
+    <div className="w-full lg:w-1/2 h-[280px] relative">
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie
+            data={data}
+            cx="50%" cy="50%"
+            innerRadius={75} outerRadius={105}
+            paddingAngle={4}
+            dataKey="value"
+            stroke="rgba(255,255,255,0.4)"
+            strokeWidth={3}
+            cornerRadius={8}
+            onMouseEnter={(_, i) => setActive(i)}
+            onMouseLeave={() => setActive(null)}
+          >
+            {data.map((entry, index) => (
+              <Cell
+                key={`cell-${index}`}
+                fill={entry.fill}
+                className="drop-shadow-sm outline-none cursor-pointer"
+                // Dim the others rather than growing the hovered slice, which
+                // would distort the very proportions the chart exists to show.
+                opacity={active === null || active === index ? 1 : 0.35}
+              />
+            ))}
+          </Pie>
+        </PieChart>
+      </ResponsiveContainer>
+
+      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none px-12 text-center">
+        {slice ? (
+          <>
+            <span className="flex items-center gap-1.5 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider max-w-full">
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: slice.fill }} />
+              <span className="truncate">{slice.name}</span>
+            </span>
+            <span className="text-xl font-black text-slate-800 dark:text-slate-100 tabular-nums">
+              {symbol}{compact(slice.value)}
+            </span>
+            <span className="text-xs font-semibold text-slate-400 tabular-nums">{share.toFixed(1)}% of total</span>
+          </>
+        ) : (
+          <>
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total</span>
+            <span className="text-xl font-black text-slate-800 dark:text-slate-100 tabular-nums">
+              {symbol}{compact(total)}
+            </span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
 /* ── Glassy Metric Card Component ── */
 const MetricCard = ({ title, value, subtitle, icon, colorClass }) => (
   <div className="bg-white/60 dark:bg-slate-900/60 backdrop-blur-2xl border border-white/60 dark:border-slate-700/50 rounded-[2rem] shadow-lg shadow-slate-200/5 dark:shadow-none p-6 flex items-center gap-5 transition-all duration-300 hover:bg-white/80 dark:hover:bg-slate-900/80 hover:-translate-y-1">
@@ -77,13 +154,15 @@ const AnalyticsPage = () => {
 
   // Process Data
   const incomes = analytics.filter(a => a.type === 'INCOME').map((a, i) => ({ 
-    name: a.category, 
+    // A null category produced a legend row with a colour and an amount but
+    // nothing saying what it was.
+    name: a.category || 'Uncategorised', 
     value: parseFloat(a.total_amount),
     fill: COLORS[i % COLORS.length]
   }));
   
   const expenses = analytics.filter(a => a.type === 'EXPENSE').map((a, i) => ({ 
-    name: a.category, 
+    name: a.category || 'Uncategorised', 
     value: parseFloat(a.total_amount),
     fill: EXPENSE_COLORS[i % EXPENSE_COLORS.length]
   }));
@@ -192,35 +271,8 @@ const AnalyticsPage = () => {
                   </div>
                 ) : (
                   <div className="flex flex-col lg:flex-row items-center gap-8 flex-1">
-                    <div className="w-full lg:w-1/2 h-[280px] relative">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={incomes}
-                            cx="50%" cy="50%"
-                            innerRadius={75} outerRadius={105}
-                            paddingAngle={4}
-                            dataKey="value"
-                            stroke="rgba(255,255,255,0.4)"
-                            strokeWidth={3}
-                            cornerRadius={8}
-                          >
-                            {incomes.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={entry.fill} className="drop-shadow-sm outline-none" />
-                            ))}
-                          </Pie>
-                          <Tooltip content={<CustomTooltip formatCurrency={formatCurrency} />} cursor={false} />
-                        </PieChart>
-                      </ResponsiveContainer>
-                      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total</span>
-                        <span className="text-xl font-black text-slate-800 dark:text-slate-100">
-                          {settings?.currency_symbol || '$'}
-                          {(totalIncome / 1000).toFixed(1)}k
-                        </span>
-                      </div>
-                    </div>
-                    
+                    <BreakdownDonut data={incomes} total={totalIncome} symbol={settings?.currency_symbol || '$'} />
+
                     <div className="w-full lg:w-1/2 space-y-3">
                       {incomes.map((inc, i) => (
                         <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-white/40 dark:bg-slate-800/40 border border-white/40 dark:border-slate-700/30 hover:bg-white/60 dark:hover:bg-slate-800/60 transition-colors">
@@ -255,35 +307,8 @@ const AnalyticsPage = () => {
                   </div>
                 ) : (
                   <div className="flex flex-col lg:flex-row items-center gap-8 flex-1">
-                    <div className="w-full lg:w-1/2 h-[280px] relative">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={expenses}
-                            cx="50%" cy="50%"
-                            innerRadius={75} outerRadius={105}
-                            paddingAngle={4}
-                            dataKey="value"
-                            stroke="rgba(255,255,255,0.4)"
-                            strokeWidth={3}
-                            cornerRadius={8}
-                          >
-                            {expenses.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={entry.fill} className="drop-shadow-sm outline-none" />
-                            ))}
-                          </Pie>
-                          <Tooltip content={<CustomTooltip formatCurrency={formatCurrency} />} cursor={false} />
-                        </PieChart>
-                      </ResponsiveContainer>
-                      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total</span>
-                        <span className="text-xl font-black text-slate-800 dark:text-slate-100">
-                           {settings?.currency_symbol || '$'}
-                           {(totalExpense / 1000).toFixed(1)}k
-                        </span>
-                      </div>
-                    </div>
-                    
+                    <BreakdownDonut data={expenses} total={totalExpense} symbol={settings?.currency_symbol || '$'} />
+
                     <div className="w-full lg:w-1/2 space-y-3">
                       {expenses.map((exp, i) => (
                         <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-white/40 dark:bg-slate-800/40 border border-white/40 dark:border-slate-700/30 hover:bg-white/60 dark:hover:bg-slate-800/60 transition-colors">
