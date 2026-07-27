@@ -1,4 +1,5 @@
 const pool = require('../config/database');
+const { effectiveShares } = require('../utils/distribution');
 
 // A share percentage is money. Nothing checked this before, so a typo of 600
 // instead of 60 would be stored and paid out.
@@ -14,7 +15,11 @@ const validatePercentage = (v) => {
 const getAllShareholders = async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM shareholders ORDER BY is_priority DESC, name ASC');
-    res.json(result.rows);
+    // effective_percentage: what the stored figure actually works out to as a
+    // share of net profit. A non-priority partner's percentage describes the
+    // pool left after the priority cut, not the profit, so the two differ and
+    // only one of them is what lands in their account.
+    res.json(effectiveShares(result.rows));
   } catch (error) {
     console.error('Get shareholders error:', error);
     res.status(500).json({ error: 'Failed to fetch shareholders' });

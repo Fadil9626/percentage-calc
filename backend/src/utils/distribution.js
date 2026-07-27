@@ -146,4 +146,36 @@ function calculateDistribution(netProfit, partners) {
   };
 }
 
-module.exports = { calculateDistribution, validateShares, splitByWeight, toCents, fromCents };
+/**
+ * What each shareholder's percentage actually works out to as a share of net
+ * profit.
+ *
+ * The number stored against a non-priority partner describes their slice of the
+ * *remaining* pool, not of the profit — so a partner set to 15% alongside a 15%
+ * priority partner actually receives 12.75%. Everyone reads their stored figure
+ * as their share of the business, and eventually someone checks.
+ *
+ * @returns the same partners, each with `effective_percentage` added.
+ */
+function effectiveShares(partners) {
+  const active = partners.filter((p) => p.is_active !== false);
+  const priority = active.filter((p) => p.is_priority && pct(p.share_percentage) > 0);
+  const nonPriority = active.filter((p) => !p.is_priority && pct(p.share_percentage) > 0);
+
+  const priorityTotal = priority.reduce((s, p) => s + pct(p.share_percentage), 0);
+  const nonPriorityTotal = nonPriority.reduce((s, p) => s + pct(p.share_percentage), 0);
+  // What's left after the priority cut is what the others are dividing.
+  const remainingPool = 100 - priorityTotal;
+
+  return active.map((p) => {
+    const nominal = pct(p.share_percentage);
+    let effective;
+    if (nominal <= 0) effective = 0;
+    else if (p.is_priority) effective = nominal;                       // taken off the top
+    else if (nonPriorityTotal > 0) effective = (nominal / nonPriorityTotal) * remainingPool;
+    else effective = 0;
+    return { ...p, effective_percentage: +effective.toFixed(4) };
+  });
+}
+
+module.exports = { calculateDistribution, validateShares, effectiveShares, splitByWeight, toCents, fromCents };

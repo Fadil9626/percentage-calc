@@ -158,3 +158,54 @@ describe('splitByWeight', () => {
     expect(splitByWeight(1000, [0, 0])).toEqual([0, 0]);
   });
 });
+
+describe('effective share — what a percentage actually pays', () => {
+  const { effectiveShares } = require('./distribution');
+  const eff = (list, name) => effectiveShares(list).find((p) => p.name === name).effective_percentage;
+
+  test('a priority share is already a share of profit', () => {
+    const set = [P('CTHL', 15, true), P('CEO', 100)];
+    expect(eff(set, 'CTHL')).toBe(15);
+  });
+
+  test('a non-priority share is diluted by the priority cut', () => {
+    // The number people actually see in Settings for SL Team is 15%.
+    const set = [P('CTHL', 15, true), P('CEO', 58.5), P('SL Team', 15), P('CONS', 10),
+                 P('CTHL Team', 5), P('KTOS', 5), P('UST', 3), P('finan', 2), P('SAMS', 1.5)];
+    expect(eff(set, 'SL Team')).toBeCloseTo(12.75, 2);
+    expect(eff(set, 'CEO')).toBeCloseTo(49.725, 2);
+    expect(eff(set, 'SAMS')).toBeCloseTo(1.275, 2);
+  });
+
+  test('effective shares total 100 — the whole profit is accounted for', () => {
+    const set = [P('CTHL', 15, true), P('CEO', 58.5), P('SL Team', 15), P('CONS', 10),
+                 P('CTHL Team', 5), P('KTOS', 5), P('UST', 3), P('finan', 2), P('SAMS', 1.5)];
+    const total = effectiveShares(set).reduce((s, p) => s + p.effective_percentage, 0);
+    expect(total).toBeCloseTo(100, 2);
+  });
+
+  test('with no priority partner, effective equals nominal', () => {
+    const set = [P('A', 60), P('B', 40)];
+    expect(eff(set, 'A')).toBe(60);
+    expect(eff(set, 'B')).toBe(40);
+  });
+
+  test('effective share predicts the actual payout', () => {
+    // The claim on screen has to match the money, or it is worse than no claim.
+    const set = [P('CTHL', 15, true), P('CEO', 58.5), P('SL Team', 15), P('CONS', 10),
+                 P('CTHL Team', 5), P('KTOS', 5), P('UST', 3), P('finan', 2), P('SAMS', 1.5)];
+    const profit = 100000;
+    const d = calculateDistribution(profit, set);
+    for (const p of effectiveShares(set)) {
+      const actual = d.distributions.find((r) => r.shareholder_name === p.name).net_profit_share;
+      expect(actual).toBeCloseTo((profit * p.effective_percentage) / 100, 1);
+    }
+  });
+
+  test('inactive and zero-share partners do not distort the others', () => {
+    const set = [P('CTHL', 20, true), P('A', 50), P('B', 50), P('Zero', 0),
+                 { ...P('Gone', 80), is_active: false }];
+    expect(eff(set, 'A')).toBeCloseTo(40, 2);
+    expect(eff(set, 'Zero')).toBe(0);
+  });
+});

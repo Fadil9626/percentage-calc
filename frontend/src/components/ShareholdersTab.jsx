@@ -114,6 +114,20 @@ const ShareholdersTab = () => {
   const priorityPct = activeShareholders.filter(s => s.is_priority).reduce((s, sh) => s + parseFloat(sh.share_percentage || 0), 0);
   const standardPct = activeShareholders.filter(s => !s.is_priority).reduce((s, sh) => s + parseFloat(sh.share_percentage || 0), 0);
 
+  // Share of net profit. The API sends effective_percentage; this recomputes it
+  // the same way as a fallback so the column can't render blank against an
+  // older response. Priority shares come off the top, so they are already a
+  // share of profit; standard shares divide whatever is left.
+  const effPct = (sh) => {
+    if (sh.effective_percentage !== undefined && sh.effective_percentage !== null) {
+      return parseFloat(sh.effective_percentage);
+    }
+    const nominal = parseFloat(sh.share_percentage || 0);
+    if (nominal <= 0) return 0;
+    if (sh.is_priority) return nominal;
+    return standardPct > 0 ? (nominal / standardPct) * (100 - priorityPct) : 0;
+  };
+
   if (loading) return (
     <div className="flex items-center justify-center h-48">
       <div className="w-8 h-8 border-4 border-indigo-200/50 border-t-indigo-600 rounded-full animate-spin backdrop-blur-sm" />
@@ -133,6 +147,25 @@ const ShareholdersTab = () => {
           <div>
             <p className="text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-400 mb-0.5">Standard Pool: {standardPct.toFixed(2)}%</p>
             <p className="text-xs font-medium text-amber-700/80 dark:text-amber-300/80 leading-relaxed">Standard active shareholders must sum to exactly 100% to fully distribute the remaining profit.</p>
+          </div>
+        </div>
+      )}
+
+      {/* Explains the two percentage columns. Without this the table shows a
+          partner two different numbers with no indication which one is theirs. */}
+      {priorityPct > 0 && (
+        <div className="mb-6 flex items-start gap-3 bg-indigo-500/5 backdrop-blur-md border border-indigo-500/15 rounded-2xl px-5 py-4">
+          <span className="text-indigo-500 text-lg mt-0.5">ℹ️</span>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-indigo-800 dark:text-indigo-300 mb-0.5">
+              Share % and Of Profit are different numbers
+            </p>
+            <p className="text-xs font-medium text-indigo-700/80 dark:text-indigo-300/80 leading-relaxed">
+              Priority shareholders take {priorityPct.toFixed(2)}% off the top, so standard shareholders divide
+              the remaining {(100 - priorityPct).toFixed(2)}% between them. A standard shareholder set to 15%
+              therefore receives {(15 / (standardPct || 100) * (100 - priorityPct)).toFixed(2)}% of net profit.
+              <strong className="font-bold"> Of Profit</strong> is the figure that reaches their account.
+            </p>
           </div>
         </div>
       )}
@@ -177,7 +210,7 @@ const ShareholdersTab = () => {
           <table className="w-full text-sm text-left">
             <thead className="bg-white/40 dark:bg-slate-800/40 border-b border-white/40 dark:border-slate-700/30">
               <tr>
-                {['Name','Contact / Status','Share %','Tier','Actions'].map(h => (
+                {['Name','Contact / Status','Share %','Of Profit','Tier','Actions'].map(h => (
                   <th key={h} className={`px-5 py-3 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 ${h === 'Actions' ? 'text-right' : ''}`}>
                     {h}
                   </th>
@@ -210,10 +243,30 @@ const ShareholdersTab = () => {
                     </td>
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-black text-slate-800 dark:text-slate-100 w-12">{parseFloat(s.share_percentage || 0).toFixed(2)}%</span>
+                        <span className="text-xs font-black text-slate-500 dark:text-slate-400 w-12">{parseFloat(s.share_percentage || 0).toFixed(2)}%</span>
                         <div className="flex-1 max-w-[60px] bg-slate-200/50 dark:bg-slate-800/50 rounded-full h-1">
-                          <div className={`h-1 rounded-full ${barColor}`} style={{ width: `${Math.min(parseFloat(s.share_percentage || 0), 100)}%` }} />
+                          <div className={`h-1 rounded-full ${barColor} opacity-50`} style={{ width: `${Math.min(parseFloat(s.share_percentage || 0), 100)}%` }} />
                         </div>
+                      </div>
+                    </td>
+                    {/* What the stored percentage actually pays. For a standard
+                        partner it describes the pool left after the priority
+                        cut, not the profit — so 15% stored is 12.75% received.
+                        Shown as its own column because they are different
+                        numbers and only this one reaches a bank account. */}
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-black text-slate-800 dark:text-slate-100 w-14 tabular-nums">
+                          {effPct(s).toFixed(2)}%
+                        </span>
+                        <div className="flex-1 max-w-[60px] bg-slate-200/50 dark:bg-slate-800/50 rounded-full h-1">
+                          <div className={`h-1 rounded-full ${barColor}`} style={{ width: `${Math.min(effPct(s), 100)}%` }} />
+                        </div>
+                        {!s.is_priority && Math.abs(effPct(s) - parseFloat(s.share_percentage || 0)) > 0.005 && (
+                          <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 whitespace-nowrap" title="Diluted by the priority partner's share, which comes off the top">
+                            diluted
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-5 py-4">
