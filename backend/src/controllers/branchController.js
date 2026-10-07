@@ -77,4 +77,42 @@ const update = async (req, res) => {
   }
 };
 
-module.exports = { list, create, update, nameProblem };
+/**
+ * Admin: every branch side by side for one month - income, expenses, profit and whether the month
+ * is closed - with the totals across them. `month` is YYYY-MM; without it, the latest month any
+ * branch has. A branch with nothing for that month still appears, with no ledger.
+ */
+const summary = async (req, res) => {
+  try {
+    const { rows: monthRows } = await pool.query(
+      `SELECT DISTINCT to_char(month, 'YYYY-MM') AS m FROM ledgers ORDER BY m DESC`);
+    const months = monthRows.map((r) => r.m);
+    let month = req.query.month;
+    if (month !== undefined && !/^\d{4}-(0[1-9]|1[0-2])$/.test(String(month))) {
+      return res.status(400).json({ error: 'Give the month as YYYY-MM.' });
+    }
+    month = month || months[0] || null;
+    const { rows } = await pool.query(
+      `SELECT b.id, b.name, b.is_active,
+              l.id AS ledger_id, l.status, l.label,
+              COALESCE(l.total_income, 0)::text  AS income,
+              COALESCE(l.total_expense, 0)::text AS expense,
+              COALESCE(l.net_profit, 0)::text    AS net,
+              (SELECT COUNT(*)::int FROM transactions t WHERE t.ledger_id = l.id) AS entries
+         FROM branches b
+         LEFT JOIN ledgers l ON l.branch_id = b.id AND to_char(l.month, 'YYYY-MM') = $1
+        ORDER BY b.created_at`, [month]);
+    // Totals in cents, so adding up many branches never drifts.
+    const cents = (v) => Math.round(Number(v) * 100);
+    const sum = (k) => (rows.reduce((a, r) => a + cents(r[k]), 0) / 100).toFixed(2);
+    res.json({
+      month, months, branches: rows,
+      totals: { income: sum('income'), expense: sum('expense'), net: sum('net') },
+    });
+  } catch (e) {
+    console.error('Branch summary error:', e);
+    res.status(500).json({ error: 'Failed to build the branch summary' });
+  }
+};
+
+module.exports = { list, create, update, summary, nameProblem };

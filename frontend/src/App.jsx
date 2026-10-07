@@ -9,6 +9,7 @@ import CloseLedgerPage from './pages/CloseLedgerPage';
 import DistributionsPage from './pages/DistributionsPage';
 import SettingsPage from './pages/SettingsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
+import BranchOverviewPage from './pages/BranchOverviewPage';
 import { SettingsProvider } from './context/SettingsContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { BranchProvider, useBranch } from './context/BranchContext';
@@ -85,6 +86,15 @@ function App() {
             element={
               <ProtectedRoute allowedRoles={['ADMIN']}>
                 <AnalyticsPage />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/branches"
+            element={
+              <ProtectedRoute allowedRoles={['ADMIN']}>
+                <BranchOverviewPage />
               </ProtectedRoute>
             }
           />

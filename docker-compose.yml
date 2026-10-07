@@ -15,6 +15,13 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/database/init.sql:/docker-entrypoint-initdb.d/01_init.sql
       - ./backend/database/settings.sql:/docker-entrypoint-initdb.d/02_settings.sql
+      # The later changes, in the order they were made. A new database gets them all; an existing
+      # one runs each by hand once (every one is safe to run again).
+      - ./backend/database/migration_add_shareholders.sql:/docker-entrypoint-initdb.d/03_shareholders.sql
+      - ./backend/database/migration_add_categories.sql:/docker-entrypoint-initdb.d/04_categories.sql
+      - ./backend/database/migration_add_label.sql:/docker-entrypoint-initdb.d/05_label.sql
+      - ./backend/database/migration_safety_rules.sql:/docker-entrypoint-initdb.d/06_safety_rules.sql
+      - ./backend/database/migration_add_branches.sql:/docker-entrypoint-initdb.d/07_branches.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rbac_user -d percentage_calc"]
       interval: 10s

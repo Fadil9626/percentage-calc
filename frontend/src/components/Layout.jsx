@@ -82,6 +82,7 @@ const Layout = ({ children, title, subtitle }) => {
           {hasRole('ADMIN') && (
             <>
               <NavItem to="/analytics" icon="analytics" label="Analytics" />
+              {branches.length > 1 && <NavItem to="/branches" icon="branch" label="All Branches" />}
               <NavItem to="/close-ledger"  icon="close"         label="Close Month" />
               <NavItem to="/distributions" icon="distributions" label="Distributions" />
 

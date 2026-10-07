@@ -1,5 +1,10 @@
--- Add settings table
-CREATE TABLE settings (
+-- Settings: the one row of workspace settings (currency, and the categories added later).
+--
+-- This used to stop a fresh install: a CHECK holding a subquery (which Postgres refuses) and an
+-- INSERT whose SELECT did not match its columns. Now safe to run more than once; the app reads
+-- the most recently updated row.
+
+CREATE TABLE IF NOT EXISTS settings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   currency_code VARCHAR(3) DEFAULT 'USD',
   currency_symbol VARCHAR(5) DEFAULT '$',
@@ -8,20 +13,11 @@ CREATE TABLE settings (
   updated_by UUID REFERENCES users(id)
 );
 
--- Create unique constraint to ensure only one settings row
-ALTER TABLE settings ADD CONSTRAINT settings_single_row CHECK (id = (SELECT id FROM settings LIMIT 1));
-
--- Insert default settings
-INSERT INTO settings (currency_code, currency_symbol, currency_name, updated_by)
-SELECT id FROM users WHERE role = 'ADMIN' LIMIT 1
-UNION ALL SELECT gen_random_uuid() WHERE NOT EXISTS (SELECT 1 FROM settings)
-ON CONFLICT DO NOTHING;
-
--- If the above doesn't work, use simpler approach
-DELETE FROM settings;
+-- The default row, only when there is none.
 INSERT INTO settings (currency_code, currency_symbol, currency_name)
-VALUES ('USD', '$', 'US Dollar');
+SELECT 'USD', '$', 'US Dollar'
+ WHERE NOT EXISTS (SELECT 1 FROM settings);
 
--- Create trigger for settings update timestamp
+DROP TRIGGER IF EXISTS update_settings_updated_at ON settings;
 CREATE TRIGGER update_settings_updated_at BEFORE UPDATE ON settings
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
