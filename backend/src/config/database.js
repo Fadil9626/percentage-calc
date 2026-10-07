@@ -1,4 +1,9 @@
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+
+// A ledger's month is a calendar day (DATE). Read as a JavaScript Date it became a timestamp at
+// local midnight, which is the previous day in UTC on any server east of Greenwich - and so the
+// previous MONTH once it is turned back into a date. Kept as the text Postgres sends: YYYY-MM-DD.
+types.setTypeParser(1082, (v) => v);
 require('dotenv').config();
 
 const pool = new Pool({

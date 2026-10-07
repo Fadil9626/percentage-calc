@@ -58,6 +58,8 @@ const updateShareholder = async (req, res) => {
     if (name !== undefined) { updates.push(`name = $${count++}`); values.push(name); }
     if (email !== undefined) { updates.push(`email = $${count++}`); values.push(email); }
     if (share_percentage !== undefined) {
+      // Cleared in the form, it arrived as "" and went to the database, which refused it: a 500.
+      if (share_percentage === '' || share_percentage === null) return res.status(400).json({ error: 'Enter a share percentage (0 to 100).' });
       const pctError = validatePercentage(share_percentage);
       if (pctError) return res.status(400).json({ error: pctError });
       updates.push(`share_percentage = $${count++}`); values.push(share_percentage);

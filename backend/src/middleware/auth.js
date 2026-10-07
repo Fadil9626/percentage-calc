@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const pool = require('../config/database');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
@@ -14,15 +15,25 @@ const authenticateToken = (req, res, next) => {
     return res.status(401).json({ error: 'Access token required' });
   }
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
+  jwt.verify(token, JWT_SECRET, async (err, user) => {
     if (err) {
       if (err.name === 'TokenExpiredError') {
         return res.status(401).json({ error: 'Token expired' });
       }
       return res.status(403).json({ error: 'Invalid token' });
     }
-    req.user = user;
-    next();
+    // The token alone used to be trusted for its whole 24 hours: a user switched off, deleted or
+    // moved from ADMIN to DATA_ENTRY kept their old access until it ran out. The account is read
+    // on every request, and its role - not the one written in the token - is what counts.
+    try {
+      const { rows: [account] } = await pool.query('SELECT id, email, name, role, is_active FROM users WHERE id = $1', [user.id]);
+      if (!account || !account.is_active) return res.status(401).json({ error: 'Your account is not active. Please sign in again.' });
+      req.user = { ...user, email: account.email, name: account.name, role: account.role };
+      next();
+    } catch (e) {
+      console.error('Auth check error:', e);
+      res.status(500).json({ error: 'Could not check your sign-in' });
+    }
   });
 };
 
