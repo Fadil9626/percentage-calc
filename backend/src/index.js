@@ -22,6 +22,7 @@ const authRoutes = require('./routes/authRoutes');
 const ledgerRoutes = require('./routes/ledgerRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
 const shareholderRoutes = require('./routes/shareholderRoutes');
+const branchRoutes = require('./routes/branchRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 5010;
@@ -63,6 +64,7 @@ app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/ledgers', ledgerRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/shareholders', shareholderRoutes);
+app.use('/api/branches', branchRoutes);
 
 // 404 handler
 app.use((req, res) => {

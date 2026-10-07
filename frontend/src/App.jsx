@@ -11,6 +11,17 @@ import SettingsPage from './pages/SettingsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import { SettingsProvider } from './context/SettingsContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { BranchProvider, useBranch } from './context/BranchContext';
+import { useAuth } from './context/AuthContext';
+
+// The pages start over whenever the branch changes, so each loads that branch's figures afresh.
+// Signed in, they wait for the branches first, so nothing is fetched for the wrong one.
+const BranchRoutes = ({ children }) => {
+  const { user } = useAuth();
+  const { branchId, loaded } = useBranch();
+  if (user && !loaded) return null;
+  return <Routes key={branchId || 'none'}>{children}</Routes>;
+};
 
 function App() {
   return (
@@ -18,7 +29,8 @@ function App() {
       <ThemeProvider>
         <AuthProvider>
           <SettingsProvider>
-            <Routes>
+          <BranchProvider>
+            <BranchRoutes>
           {/* Public Routes */}
           <Route path="/login" element={<LoginPage />} />
 
@@ -82,7 +94,8 @@ function App() {
 
           {/* 404 Page */}
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
-            </Routes>
+            </BranchRoutes>
+          </BranchProvider>
           </SettingsProvider>
         </AuthProvider>
       </ThemeProvider>

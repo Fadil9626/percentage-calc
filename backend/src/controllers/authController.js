@@ -55,7 +55,9 @@ const login = async (req, res) => {
 const getAllUsers = async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, email, name, role, is_active, created_at FROM users ORDER BY created_at DESC'
+      `SELECT id, email, name, role, is_active, created_at,
+              COALESCE((SELECT ARRAY_AGG(ub.branch_id) FROM user_branches ub WHERE ub.user_id = users.id), '{}') AS branch_ids
+         FROM users ORDER BY created_at DESC`
     );
 
     res.json(result.rows);
@@ -70,7 +72,7 @@ const getAllUsers = async (req, res) => {
  */
 const createUser = async (req, res) => {
   try {
-    const { email, password, name, role } = req.body;
+    const { email, password, name, role, branch_ids } = req.body;
 
     if (!email || !password || !name || !role) {
       return res.status(400).json({ error: 'Email, password, name, and role required' });
@@ -82,6 +84,15 @@ const createUser = async (req, res) => {
       return res.status(400).json({ error: 'Invalid role' });
     }
 
+    // The branches they work in: given, or (for data entry) every active branch when none is named,
+    // so a new user is never left with nowhere to work.
+    let branches = branch_ids;
+    if (branches === undefined) {
+      branches = role === 'ADMIN' ? [] : (await pool.query('SELECT id FROM branches WHERE is_active ORDER BY created_at LIMIT 1')).rows.map((r) => r.id);
+    }
+    const branchWhy = await branchIdsProblem(branches, role);
+    if (branchWhy) return res.status(400).json({ error: branchWhy });
+
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -89,6 +100,7 @@ const createUser = async (req, res) => {
       'INSERT INTO users (email, password_hash, name, role) VALUES ($1, $2, $3, $4) RETURNING id, email, name, role',
       [email, hashedPassword, name, role]
     );
+    await setBranches(result.rows[0].id, branches);
 
     res.status(201).json({
       message: 'User created successfully',
@@ -106,7 +118,26 @@ const createUser = async (req, res) => {
 /**
  * Update user (admin only)
  */
-const ROLES = ['ADMIN', 'DATA_ENTRY'];
+// The same three the Users screen offers (PARTNER was left out here, so changing anyone to it failed).
+const ROLES = ['ADMIN', 'PARTNER', 'DATA_ENTRY'];
+
+/**
+ * Give a user exactly these branches. Checked first: every id must be a real branch, and a
+ * data-entry user needs at least one (with none they could do nothing). Admins work in all
+ * branches whatever this holds.
+ */
+const branchIdsProblem = async (ids, role) => {
+  if (!Array.isArray(ids)) return 'branch_ids must be a list';
+  if (role !== 'ADMIN' && ids.length === 0) return 'Give everyone except admins at least one branch.';
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (ids.some((i) => !UUID.test(String(i)))) return 'One of those is not a branch.';
+  const { rows: [n] } = await pool.query('SELECT COUNT(*)::int AS n FROM branches WHERE id = ANY($1::uuid[])', [ids]);
+  return n.n === new Set(ids).size ? null : 'One of those is not a branch.';
+};
+const setBranches = async (userId, ids) => {
+  await pool.query('DELETE FROM user_branches WHERE user_id = $1', [userId]);
+  if (ids.length) await pool.query('INSERT INTO user_branches (user_id, branch_id) SELECT $1, UNNEST($2::uuid[]) ON CONFLICT DO NOTHING', [userId, [...new Set(ids)]]);
+};
 
 /** Would this change leave nobody able to administer the system? */
 const wouldLeaveNoAdmin = async (id, { role, is_active }) => {
@@ -121,7 +152,7 @@ const wouldLeaveNoAdmin = async (id, { role, is_active }) => {
 const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, role, is_active } = req.body;
+    const { name, role, is_active, branch_ids } = req.body;
 
     // Any text was accepted as a role: "admin" or a typo left the person locked out of everything.
     if (role !== undefined && !ROLES.includes(role)) {
@@ -155,15 +186,22 @@ const updateUser = async (req, res) => {
       values.push(is_active);
     }
 
-    if (updates.length === 0) {
+    if (branch_ids !== undefined) {
+      const { rows: [cur] } = await pool.query('SELECT role FROM users WHERE id = $1', [id]);
+      const why = await branchIdsProblem(branch_ids, role ?? cur?.role);
+      if (why) return res.status(400).json({ error: why });
+    }
+
+    if (updates.length === 0 && branch_ids === undefined) {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
     values.push(id);
 
-    const query = `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING id, email, name, role, is_active`;
-
-    const result = await pool.query(query, values);
+    const result = updates.length
+      ? await pool.query(`UPDATE users SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING id, email, name, role, is_active`, values)
+      : await pool.query('SELECT id, email, name, role, is_active FROM users WHERE id = $1', [id]);
+    if (result.rows.length && branch_ids !== undefined) await setBranches(id, branch_ids);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });

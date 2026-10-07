@@ -2,6 +2,7 @@ import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { useBranch } from '../context/BranchContext';
 
 /* ── Icon helpers ─────────────────────────────────────────── */
 const Icon = ({ d, cls = '' }) => (
@@ -20,6 +21,7 @@ const ICONS = {
   settings:     'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z',
   logout:       'M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1',
   analytics:    'M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z',
+  branch:       'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4',
   moon:         'M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z',
   sun:          'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',
 };
@@ -46,6 +48,7 @@ const Layout = ({ children, title, subtitle }) => {
   const navigate = useNavigate();
   const { user, logout, hasRole } = useAuth();
   const { isDark, toggleTheme } = useTheme();
+  const { branches, branch, branchId, chooseBranch } = useBranch();
 
   const handleLogout = () => { logout(); navigate('/login'); };
 
@@ -120,9 +123,32 @@ const Layout = ({ children, title, subtitle }) => {
             <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100">{title}</h1>
             {subtitle && <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{subtitle}</p>}
           </div>
+          <div className="flex items-center gap-3">
+          {/* The branch everything on screen belongs to. One branch: just its name. */}
+          {branches.length > 1 ? (
+            <label className="flex items-center gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
+              <Icon d={ICONS.branch} />
+              <span className="sr-only">Branch</span>
+              <select
+                data-branch-picker
+                value={branchId || ''}
+                onChange={(e) => chooseBranch(e.target.value)}
+                className="text-sm font-semibold pl-3 pr-8 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 dark:focus:ring-indigo-500/20 outline-none"
+              >
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}{b.is_active ? '' : ' (switched off)'}</option>
+                ))}
+              </select>
+            </label>
+          ) : branch && (
+            <span data-branch-name className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400">
+              <Icon d={ICONS.branch} />{branch.name}
+            </span>
+          )}
           <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-500/20">
             {user?.role}
           </span>
+          </div>
         </header>
 
         {/* Page content */}

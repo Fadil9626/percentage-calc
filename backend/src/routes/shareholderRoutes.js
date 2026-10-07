@@ -1,14 +1,15 @@
 const express = require('express');
+const { branchScope } = require('../utils/branches');
 const shareholderController = require('../controllers/shareholderController');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
 // Get all shareholders (Accessible to any authenticated user)
-router.get('/', authenticateToken, shareholderController.getAllShareholders);
+router.get('/', authenticateToken, branchScope, shareholderController.getAllShareholders);
 
 // Create a new shareholder (Admin only)
-router.post('/', authenticateToken, requireRole(['ADMIN']), shareholderController.createShareholder);
+router.post('/', authenticateToken, requireRole(['ADMIN']), branchScope, shareholderController.createShareholder);
 
 // Update an existing shareholder (Admin only)
 router.put('/:id', authenticateToken, requireRole(['ADMIN']), shareholderController.updateShareholder);

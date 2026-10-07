@@ -9,12 +9,20 @@ const api = axios.create({
   },
 });
 
+// The branch picked in the header. Sent with every request so the server answers for that branch
+// alone; the server still checks the person works there.
+export const BRANCH_KEY = 'branch_id';
+
 // Add request interceptor to attach token
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+    }
+    const branchId = localStorage.getItem(BRANCH_KEY);
+    if (branchId && config.url !== '/branches' && !(config.params && 'branch_id' in config.params)) {
+      config.params = { ...(config.params || {}), branch_id: branchId };
     }
     return config;
   },

@@ -14,7 +14,8 @@ const validatePercentage = (v) => {
 
 const getAllShareholders = async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM shareholders ORDER BY is_priority DESC, name ASC');
+    // The branch's own shareholders: each branch splits its own profit among its own partners.
+    const result = await pool.query('SELECT * FROM shareholders WHERE branch_id = $1 ORDER BY is_priority DESC, name ASC', [req.branchId]);
     // effective_percentage: what the stored figure actually works out to as a
     // share of net profit. A non-priority partner's percentage describes the
     // pool left after the priority cut, not the profit, so the two differ and
@@ -36,8 +37,8 @@ const createShareholder = async (req, res) => {
     if (pctError) return res.status(400).json({ error: pctError });
 
     const result = await pool.query(
-      'INSERT INTO shareholders (name, email, share_percentage, is_priority) VALUES ($1, $2, $3, $4) RETURNING *',
-      [name, email || null, share_percentage || 0, is_priority || false]
+      'INSERT INTO shareholders (name, email, share_percentage, is_priority, branch_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [name, email || null, share_percentage || 0, is_priority || false, req.branchId]
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {

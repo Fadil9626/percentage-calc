@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../services/api';
 import Modal from './Modal';
+import { useBranch } from '../context/BranchContext';
 
 const ROLES = ['ADMIN', 'PARTNER', 'DATA_ENTRY'];
 
@@ -18,6 +19,8 @@ const RoleBadge = ({ role }) => {
 };
 
 const UsersTab = () => {
+  const { branches, branchId } = useBranch();
+  const branchName = (id) => branches.find((b) => b.id === id)?.name;
   const [users, setUsers]           = useState([]);
   const [loading, setLoading]       = useState(true);
   
@@ -50,13 +53,14 @@ const UsersTab = () => {
 
   const openCreate = () => {
     setEditingUser(null);
-    setFormData({ email: '', password: '', name: '', role: 'DATA_ENTRY' });
+    // A new staff member starts in the branch being viewed; change it below.
+    setFormData({ email: '', password: '', name: '', role: 'DATA_ENTRY', branch_ids: branchId ? [branchId] : [] });
     setIsModalOpen(true);
   };
 
   const openEdit = (user) => {
     setEditingUser(user);
-    setFormData({ email: user.email, password: '', name: user.name, role: user.role });
+    setFormData({ email: user.email, password: '', name: user.name, role: user.role, branch_ids: user.branch_ids || [] });
     setIsModalOpen(true);
   };
 
@@ -73,7 +77,7 @@ const UsersTab = () => {
     setSaving(true);
     try {
       if (editingUser) {
-        await api.put(`/auth/users/${editingUser.id}`, { name: formData.name, role: formData.role });
+        await api.put(`/auth/users/${editingUser.id}`, { name: formData.name, role: formData.role, branch_ids: formData.branch_ids });
       } else {
         await api.post('/auth/users', formData);
       }
@@ -129,7 +133,7 @@ const UsersTab = () => {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
-                {['Name','Email','Role','Status',''].map(h => (
+                {['Name','Email','Role','Branches','Status',''].map(h => (
                   <th key={h} className="px-6 py-3 text-left text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -140,6 +144,9 @@ const UsersTab = () => {
                   <td className="px-6 py-4 font-semibold text-slate-800 dark:text-slate-200">{u.name}</td>
                   <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{u.email}</td>
                   <td className="px-6 py-4"><RoleBadge role={u.role} /></td>
+                  <td className="px-6 py-4 text-xs text-slate-500 dark:text-slate-400" data-user-branches={u.email}>
+                    {u.role === 'ADMIN' ? 'All branches' : (u.branch_ids || []).map(branchName).filter(Boolean).join(', ') || <span className="text-rose-500">None</span>}
+                  </td>
                   <td className="px-6 py-4">
                     <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${u.is_active ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'}`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${u.is_active ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`} />
@@ -159,7 +166,7 @@ const UsersTab = () => {
                 </tr>
               ))}
               {users.length === 0 && (
-                <tr><td colSpan={5} className="px-6 py-16 text-center text-sm text-slate-400 dark:text-slate-500">No users found.</td></tr>
+                <tr><td colSpan={6} className="px-6 py-16 text-center text-sm text-slate-400 dark:text-slate-500">No users found.</td></tr>
               )}
             </tbody>
           </table>
@@ -216,6 +223,29 @@ const UsersTab = () => {
               ))}
             </div>
           </div>
+          {/* Admins work in every branch; everybody else only in the ones ticked here. */}
+          {formData.role === 'ADMIN' ? (
+            <p className="text-xs text-slate-500 dark:text-slate-400">Admins work in every branch.</p>
+          ) : (
+            <div data-branch-choices>
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Works in</label>
+              <div className="flex flex-wrap gap-2">
+                {branches.map((b) => {
+                  const on = (formData.branch_ids || []).includes(b.id);
+                  return (
+                    <label key={b.id} className={`flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-xl border cursor-pointer transition-all ${
+                      on ? 'bg-indigo-50 dark:bg-indigo-500/10 border-indigo-300 dark:border-indigo-500/40 text-indigo-700 dark:text-indigo-300'
+                         : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'}`}>
+                      <input type="checkbox" checked={on} className="accent-indigo-600"
+                        onChange={() => setFormData((f) => ({ ...f, branch_ids: on ? f.branch_ids.filter((x) => x !== b.id) : [...(f.branch_ids || []), b.id] }))} />
+                      {b.name}{b.is_active ? '' : ' (off)'}
+                    </label>
+                  );
+                })}
+              </div>
+              {(formData.branch_ids || []).length === 0 && <p className="text-xs text-rose-500 mt-1.5">Tick at least one branch.</p>}
+            </div>
+          )}
         </div>
       </Modal>
 

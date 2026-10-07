@@ -4,6 +4,7 @@ import Layout from '../components/Layout';
 import Modal from '../components/Modal';
 import UsersTab from '../components/UsersTab';
 import ShareholdersTab from '../components/ShareholdersTab';
+import BranchesTab from '../components/BranchesTab';
 
 const CURRENCIES = [
   { code: 'USD', symbol: '$',  name: 'US Dollar' },
@@ -82,6 +83,7 @@ const SettingsPage = () => {
             { id: 'general', label: 'General', icon: '⚙️' },
             { id: 'users', label: 'Systems Users', icon: '👥' },
             { id: 'shareholders', label: 'Shareholders', icon: '🤝' },
+            { id: 'branches', label: 'Branches', icon: '🏢' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -252,6 +254,7 @@ const SettingsPage = () => {
 
           {activeTab === 'users' && <UsersTab />}
           {activeTab === 'shareholders' && <ShareholdersTab />}
+          {activeTab === 'branches' && <BranchesTab />}
         </div>
       </div>
 

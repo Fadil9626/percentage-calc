@@ -1,6 +1,7 @@
 const { v4: uuidv4 } = require('uuid');
 const { calculateDistribution, validateShares } = require('../utils/distribution');
 const pool = require('../config/database');
+const { mayUse, ledgerFor } = require('../utils/branches');
 
 /**
  * An amount somebody typed, as money: a real, positive number within what the column holds,
@@ -39,12 +40,13 @@ const recomputeTotals = (db, ledgerId) => db.query(
  * `fn(client, ledger)` runs on an OPEN ledger; it returns the result, or undefined having already
  * answered (a 404, say), in which case nothing is kept.
  */
-const onOpenLedger = async (ledgerId, res, closedMessage, fn) => {
+const onOpenLedger = async (req, ledgerId, res, closedMessage, fn) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows: [ledger] } = await client.query('SELECT * FROM ledgers WHERE id = $1 FOR UPDATE', [ledgerId]);
-    if (!ledger) { await client.query('ROLLBACK'); res.status(404).json({ error: 'Ledger not found' }); return undefined; }
+    // A ledger in a branch this person does not work in is answered as if it did not exist.
+    if (!ledger || !(await mayUse(req.user, ledger.branch_id))) { await client.query('ROLLBACK'); res.status(404).json({ error: 'Ledger not found' }); return undefined; }
     if (ledger.status === 'CLOSED') { await client.query('ROLLBACK'); res.status(400).json({ error: closedMessage }); return undefined; }
     const result = await fn(client, ledger);
     if (result === undefined) { await client.query('ROLLBACK'); return undefined; }
@@ -65,7 +67,7 @@ const onOpenLedger = async (ledgerId, res, closedMessage, fn) => {
 const getCurrentLedger = async (req, res) => {
   try {
     let ledger = await pool.query(
-      'SELECT * FROM ledgers ORDER BY created_at DESC LIMIT 1'
+      'SELECT * FROM ledgers WHERE branch_id = $1 ORDER BY created_at DESC LIMIT 1', [req.branchId]
     );
 
     if (ledger.rows.length === 0) {
@@ -75,8 +77,8 @@ const getCurrentLedger = async (req, res) => {
       const monthDate = monthStart.toISOString().split('T')[0];
 
       ledger = await pool.query(
-        'INSERT INTO ledgers (month, status, total_income, total_expense, net_profit) VALUES ($1::date, $2, $3, $4, $5) RETURNING *',
-        [monthDate, 'OPEN', 0, 0, 0]
+        'INSERT INTO ledgers (month, status, total_income, total_expense, net_profit, branch_id) VALUES ($1::date, $2, $3, $4, $5, $6) RETURNING *',
+        [monthDate, 'OPEN', 0, 0, 0, req.branchId]
       );
     }
 
@@ -93,7 +95,7 @@ const getCurrentLedger = async (req, res) => {
 const openNextLedger = async (req, res) => {
   try {
     const latest = await pool.query(
-      'SELECT * FROM ledgers ORDER BY created_at DESC LIMIT 1'
+      'SELECT * FROM ledgers WHERE branch_id = $1 ORDER BY created_at DESC LIMIT 1', [req.branchId]
     );
 
     if (latest.rows.length === 0) {
@@ -120,16 +122,16 @@ const openNextLedger = async (req, res) => {
 
     // Prevent duplicate months
     const existing = await pool.query(
-      'SELECT id FROM ledgers WHERE month = $1::date',
-      [nextMonthStr]
+      'SELECT id FROM ledgers WHERE month = $1::date AND branch_id = $2',
+      [nextMonthStr, req.branchId]
     );
     if (existing.rows.length > 0) {
       return res.status(400).json({ error: 'A ledger for this month already exists.' });
     }
 
     const newLedger = await pool.query(
-      'INSERT INTO ledgers (month, status, total_income, total_expense, net_profit) VALUES ($1::date, $2, $3, $4, $5) RETURNING *',
-      [nextMonthStr, 'OPEN', 0, 0, 0]
+      'INSERT INTO ledgers (month, status, total_income, total_expense, net_profit, branch_id) VALUES ($1::date, $2, $3, $4, $5, $6) RETURNING *',
+      [nextMonthStr, 'OPEN', 0, 0, 0, req.branchId]
     );
 
     res.json({ message: 'New ledger cycle started successfully', ledger: newLedger.rows[0] });
@@ -158,7 +160,7 @@ const addTransaction = async (req, res) => {
     const money = readAmount(amount);
     if (money.error) return res.status(400).json({ error: money.error });
 
-    const transaction = await onOpenLedger(ledger_id, res, 'Cannot add transactions to closed ledger', async (client) => (
+    const transaction = await onOpenLedger(req, ledger_id, res, 'Cannot add transactions to closed ledger', async (client) => (
       (await client.query(
         'INSERT INTO transactions (ledger_id, type, description, amount, category, created_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
         [ledger_id, type, String(description).trim(), money.value, category || null, req.user.id]
@@ -183,7 +185,7 @@ const deleteTransaction = async (req, res) => {
   try {
     const { ledger_id, id } = req.params;
 
-    const transaction = await onOpenLedger(ledger_id, res, 'Cannot delete from closed ledger', async (client) => {
+    const transaction = await onOpenLedger(req, ledger_id, res, 'Cannot delete from closed ledger', async (client) => {
       const { rows: [t] } = await client.query('DELETE FROM transactions WHERE id = $1 AND ledger_id = $2 RETURNING *', [id, ledger_id]);
       if (!t) { res.status(404).json({ error: 'Transaction not found' }); return undefined; }
       return t;
@@ -216,7 +218,7 @@ const updateTransaction = async (req, res) => {
       if (money.error) return res.status(400).json({ error: money.error });
     }
 
-    const transaction = await onOpenLedger(ledger_id, res, 'Cannot edit transactions on a closed ledger', async (client) => {
+    const transaction = await onOpenLedger(req, ledger_id, res, 'Cannot edit transactions on a closed ledger', async (client) => {
       const { rows: [t] } = await client.query(
         `UPDATE transactions
            SET type = COALESCE($1, type),
@@ -244,6 +246,7 @@ const updateTransaction = async (req, res) => {
 const getTransactions = async (req, res) => {
   try {
     const { ledger_id } = req.params;
+    if (!(await ledgerFor(req, res, ledger_id))) return;
 
     const result = await pool.query(
       `SELECT t.*, u.name as created_by_name 
@@ -287,13 +290,19 @@ const closeLedger = async (req, res) => {
     }
 
     const ledger = ledgerCheck.rows[0];
+    if (!(await mayUse(req.user, ledger.branch_id))) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Ledger not found' });
+    }
     if (ledger.status === 'CLOSED') {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Ledger is already closed' });
     }
 
+    // The branch's own shareholders share the branch's profit.
     const usersResult = await client.query(
-      'SELECT id, name, share_percentage, is_priority FROM shareholders WHERE is_active = true ORDER BY is_priority DESC, name ASC'
+      'SELECT id, name, share_percentage, is_priority FROM shareholders WHERE is_active = true AND branch_id = $1 ORDER BY is_priority DESC, name ASC',
+      [ledger.branch_id]
     );
     const partners = usersResult.rows;
 
@@ -378,12 +387,12 @@ const closeLedger = async (req, res) => {
 const previewClose = async (req, res) => {
   try {
     const { id } = req.params;
-    const ledgerResult = await pool.query('SELECT * FROM ledgers WHERE id = $1', [id]);
-    if (ledgerResult.rows.length === 0) return res.status(404).json({ error: 'Ledger not found' });
-    const ledger = ledgerResult.rows[0];
+    const ledger = await ledgerFor(req, res, id);
+    if (!ledger) return;
 
     const partners = (await pool.query(
-      'SELECT id, name, share_percentage, is_priority FROM shareholders WHERE is_active = true ORDER BY is_priority DESC, name ASC'
+      'SELECT id, name, share_percentage, is_priority FROM shareholders WHERE is_active = true AND branch_id = $1 ORDER BY is_priority DESC, name ASC',
+      [ledger.branch_id]
     )).rows;
 
     const validation = validateShares(partners);
@@ -428,7 +437,9 @@ const getDistributions = async (req, res) => {
        JOIN shareholders s ON d.shareholder_id = s.id
        JOIN distribution_ledger dl ON d.distribution_ledger_id = dl.id
        JOIN ledgers l ON dl.ledger_id = l.id
-       ORDER BY l.month DESC, s.is_priority DESC, s.name ASC`
+       WHERE l.branch_id = $1
+       ORDER BY l.month DESC, s.is_priority DESC, s.name ASC`,
+      [req.branchId]
     );
 
     res.json(result.rows);
@@ -486,7 +497,9 @@ const getAllLedgers = async (req, res) => {
     const result = await pool.query(
       `SELECT id, month, label, status, total_income, total_expense, net_profit
        FROM ledgers
-       ORDER BY month ASC`
+       WHERE branch_id = $1
+       ORDER BY month ASC`,
+      [req.branchId]
     );
     res.json(result.rows);
   } catch (error) {
@@ -506,10 +519,11 @@ const getAnalytics = async (req, res) => {
       SELECT type, COALESCE(category, 'Uncategorized') as category, SUM(amount) as total_amount
       FROM transactions
     `;
-    const params = [];
-
+    // Always within the branch: one of its ledgers, or all of them.
+    const params = [req.branchId];
+    query += ` WHERE ledger_id IN (SELECT id FROM ledgers WHERE branch_id = $1)`;
     if (ledger_id && ledger_id !== 'all') {
-      query += ` WHERE ledger_id = $1`;
+      query += ` AND ledger_id = $2`;
       params.push(ledger_id);
     }
 
@@ -539,7 +553,8 @@ const updateLedger = async (req, res) => {
       const m = /^(\d{4})-(\d{2})(?:-\d{2})?$/.exec(String(month));
       if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) return res.status(400).json({ error: 'Choose a month, as YYYY-MM.' });
       const first = `${m[1]}-${m[2]}-01`;
-      const taken = await pool.query('SELECT id FROM ledgers WHERE month = $1::date AND id <> $2', [first, id]);
+      const taken = await pool.query(
+        'SELECT id FROM ledgers WHERE month = $1::date AND id <> $2 AND branch_id = (SELECT branch_id FROM ledgers WHERE id = $2)', [first, id]);
       if (taken.rows.length) return res.status(400).json({ error: 'A ledger for this month already exists.' });
       fields.push(`month = $${idx}::date`); values.push(first); idx++;
     }

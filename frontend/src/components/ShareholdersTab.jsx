@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../services/api';
 import Modal from './Modal';
+import { useBranch } from '../context/BranchContext';
 
 const ShareholdersTab = () => {
+  const { branch } = useBranch();
   const [shareholders, setShareholders] = useState([]);
   const [loading, setLoading]           = useState(true);
   
@@ -174,7 +176,10 @@ const ShareholdersTab = () => {
       {/* ── Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
-          <h2 className="text-sm font-black text-slate-800 dark:text-slate-100 uppercase tracking-tight">Shareholder Directory</h2>
+          <h2 className="text-sm font-black text-slate-800 dark:text-slate-100 uppercase tracking-tight">
+            Shareholder Directory{branch && <span data-shareholders-branch className="text-indigo-600 dark:text-indigo-400"> · {branch.name}</span>}
+          </h2>
+          {branch && <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">These partners share this branch's profit only. Pick another branch at the top to see its partners.</p>}
           <div className="flex flex-wrap items-center gap-2 mt-1.5">
             <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-white/40 dark:bg-slate-800/40 border border-white/50 dark:border-slate-700/50 px-2 py-0.5 rounded-md">
               {shareholders.length} Registered
