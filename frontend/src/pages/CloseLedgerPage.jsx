@@ -3,6 +3,7 @@ import { useSettings } from '../context/SettingsContext';
 import api from '../services/api';
 import Layout from '../components/Layout';
 import Modal from '../components/Modal';
+import { printDistribution } from '../utils/printDistribution';
 
 /* ── Compact Glassy Metric Card ── */
 const MetricCard = ({ title, value, icon, colorClass }) => (
@@ -60,6 +61,28 @@ const CloseLedgerPage = () => {
       'This action is permanent and cannot be undone. Net profit will be calculated and distributed to all active shareholders based on their assigned percentages.',
       executeClosure
     );
+  };
+
+  const handlePrint = () => {
+    if (!distributions) return;
+    const periodLabel = ledger?.month
+      ? new Date(ledger.month).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })
+      : '';
+    printDistribution({
+      title: 'Profit Distribution Statement',
+      periodLabel,
+      currencySymbol: settings?.currency_symbol || '$',
+      summary: {
+        income: ledger?.total_income,
+        expense: ledger?.total_expense,
+        net: ledger?.net_profit,
+      },
+      rows: distributions.distributions.map((d, i) => ({
+        name: d.shareholder_name || `Shareholder ${i + 1}`,
+        percentage: d.share_percentage,
+        amount: d.net_profit_share,
+      })),
+    });
   };
 
   const openEditPeriod = () => {
@@ -192,9 +215,21 @@ const CloseLedgerPage = () => {
         {/* ── Distribution Results Table ─────────────────────────── */}
         {distributions && (
           <div className="bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl border border-white/60 dark:border-slate-700/50 rounded-2xl shadow-sm overflow-hidden animate-fadeIn">
-            <div className="px-5 py-4 border-b border-white/40 dark:border-slate-700/30 bg-white/40 dark:bg-slate-800/40">
-              <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100">Distribution Results</h2>
-              <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 mt-0.5">Waterfall calculation applied to net profit</p>
+            <div className="px-5 py-4 border-b border-white/40 dark:border-slate-700/30 bg-white/40 dark:bg-slate-800/40 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100">Distribution Results</h2>
+                <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 mt-0.5">Waterfall calculation applied to net profit</p>
+              </div>
+              <button
+                onClick={handlePrint}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 rounded-lg border border-indigo-500/20 transition-colors shadow-sm shrink-0"
+                title="Print / Save as PDF"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                </svg>
+                Print PDF
+              </button>
             </div>
             
             <div className="overflow-x-auto">

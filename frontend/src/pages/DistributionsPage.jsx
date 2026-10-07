@@ -5,6 +5,7 @@ import api from '../services/api';
 import Layout from '../components/Layout';
 import Modal from '../components/Modal';
 import { downloadCSV } from '../utils/exportCsv';
+import { printDistribution } from '../utils/printDistribution';
 
 /* ── Compact Glassy Metric Card ── */
 const MetricCard = ({ title, value, icon, colorClass }) => (
@@ -20,7 +21,7 @@ const MetricCard = ({ title, value, icon, colorClass }) => (
 );
 
 const DistributionsPage = () => {
-  const { formatCurrency } = useSettings();
+  const { formatCurrency, settings } = useSettings();
   const { hasRole } = useAuth();
   const [distributions, setDistributions] = useState([]);
   const [loading, setLoading]             = useState(true);
@@ -96,7 +97,11 @@ const DistributionsPage = () => {
 
   const byMonth = distributions.reduce((acc, d) => {
     const key = d.ledger_id;
-    if (!acc[key]) acc[key] = { ledger_id: d.ledger_id, month: d.month, ledger_label: d.ledger_label, rows: [] };
+    if (!acc[key]) acc[key] = {
+      ledger_id: d.ledger_id, month: d.month, ledger_label: d.ledger_label,
+      total_income: d.total_income, total_expense: d.total_expense, net_profit: d.net_profit,
+      rows: [],
+    };
     acc[key].rows.push(d);
     return acc;
   }, {});
@@ -105,6 +110,27 @@ const DistributionsPage = () => {
 
   const getDisplayName = ({ month, ledger_label }) =>
     ledger_label || new Date(month).toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
+
+  const handlePrintPeriod = (e, group) => {
+    e.stopPropagation();
+    const hasFinancials =
+      group.total_income != null || group.total_expense != null || group.net_profit != null;
+    printDistribution({
+      title: 'Profit Distribution Statement',
+      periodLabel: getDisplayName(group),
+      currencySymbol: settings?.currency_symbol || '$',
+      summary: hasFinancials ? {
+        income: group.total_income,
+        expense: group.total_expense,
+        net: group.net_profit,
+      } : null,
+      rows: group.rows.map(d => ({
+        name: d.shareholder_name,
+        percentage: d.share_percentage,
+        amount: d.net_profit_share,
+      })),
+    });
+  };
 
   // Custom Header Action for the Layout
   const HeaderActions = () => (
@@ -177,7 +203,8 @@ const DistributionsPage = () => {
           </div>
         ) : (
           <div className="space-y-4">
-            {monthGroups.map(({ ledger_id, month, ledger_label, rows }) => {
+            {monthGroups.map((group) => {
+              const { ledger_id, month, ledger_label, rows } = group;
               const monthTotal  = rows.reduce((s, d) => s + parseFloat(d.net_profit_share || 0), 0);
               const displayName = getDisplayName({ month, ledger_label });
               const maxShare    = Math.max(...rows.map(d => parseFloat(d.net_profit_share || 0)));
@@ -208,6 +235,14 @@ const DistributionsPage = () => {
                         <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-0.5">Total</p>
                         <p className="text-sm font-black text-indigo-600 dark:text-indigo-400">{formatCurrency(monthTotal)}</p>
                       </div>
+
+                      <button
+                        onClick={(e) => handlePrintPeriod(e, group)}
+                        className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-500/20 dark:hover:text-indigo-400 rounded-md transition-all"
+                        title="Print / Save as PDF"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
+                      </button>
 
                       {hasRole('ADMIN') && (
                         <div className="flex items-center gap-1.5 ml-2 border-l border-slate-200 dark:border-slate-700 pl-4">
