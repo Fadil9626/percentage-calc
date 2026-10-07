@@ -109,3 +109,20 @@ CREATE TRIGGER update_ledgers_updated_at BEFORE UPDATE ON ledgers
 
 CREATE TRIGGER update_transactions_updated_at BEFORE UPDATE ON transactions
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Safety rules (see migration_safety_rules.sql): real positive amounts, known types and statuses,
+-- one ledger per month.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'transactions_amount_positive') THEN
+    ALTER TABLE transactions ADD CONSTRAINT transactions_amount_positive CHECK (amount > 0 AND amount <> 'NaN'::numeric);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'transactions_type_known') THEN
+    ALTER TABLE transactions ADD CONSTRAINT transactions_type_known CHECK (type IN ('INCOME', 'EXPENSE'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ledgers_status_known') THEN
+    ALTER TABLE ledgers ADD CONSTRAINT ledgers_status_known CHECK (status IN ('OPEN', 'CLOSED'));
+  END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_ledgers_month ON ledgers (month);

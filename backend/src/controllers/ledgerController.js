@@ -3,6 +3,63 @@ const { calculateDistribution, validateShares } = require('../utils/distribution
 const pool = require('../config/database');
 
 /**
+ * An amount somebody typed, as money: a real, positive number within what the column holds,
+ * rounded to cents - or why not. Pure.
+ *
+ * "abc" used to pass (`"abc" <= 0` is false), become NaN, and be stored: Postgres numeric accepts
+ * NaN, and one such row turned the month's totals, and the profit split, into NaN.
+ */
+const MAX_AMOUNT = 9999999999.99;
+const readAmount = (v) => {
+  const text = String(v ?? '').trim();
+  const n = typeof v === 'number' ? v : Number(text);
+  if (text === '' || !Number.isFinite(n)) return { error: 'Amount must be a number' };
+  if (n <= 0) return { error: 'Amount must be positive' };
+  if (n > MAX_AMOUNT) return { error: 'Amount is too large' };
+  return { value: Math.round(n * 100) / 100 };
+};
+
+/** A ledger's totals, worked out from its transactions inside the database, in one statement. */
+const recomputeTotals = (db, ledgerId) => db.query(
+  `UPDATE ledgers l SET total_income = t.inc, total_expense = t.exp, net_profit = t.inc - t.exp
+     FROM (SELECT COALESCE(SUM(amount) FILTER (WHERE type = 'INCOME'), 0) AS inc,
+                  COALESCE(SUM(amount) FILTER (WHERE type = 'EXPENSE'), 0) AS exp
+             FROM transactions WHERE ledger_id = $1) t
+    WHERE l.id = $1`, [ledgerId]);
+
+/**
+ * Change a ledger's transactions and its totals as ONE step, with the ledger locked.
+ *
+ * Each change used to save the transaction, then recompute the totals separately, swallowing any
+ * error: two entries at once could leave stale totals, a failed recompute left totals that
+ * disagreed with the transactions while saying "added", and an entry could slip into a ledger
+ * while it was being closed. Locking the ledger row makes a close wait for an entry in flight,
+ * and an entry wait for a close (and then find it closed).
+ *
+ * `fn(client, ledger)` runs on an OPEN ledger; it returns the result, or undefined having already
+ * answered (a 404, say), in which case nothing is kept.
+ */
+const onOpenLedger = async (ledgerId, res, closedMessage, fn) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [ledger] } = await client.query('SELECT * FROM ledgers WHERE id = $1 FOR UPDATE', [ledgerId]);
+    if (!ledger) { await client.query('ROLLBACK'); res.status(404).json({ error: 'Ledger not found' }); return undefined; }
+    if (ledger.status === 'CLOSED') { await client.query('ROLLBACK'); res.status(400).json({ error: closedMessage }); return undefined; }
+    const result = await fn(client, ledger);
+    if (result === undefined) { await client.query('ROLLBACK'); return undefined; }
+    await recomputeTotals(client, ledgerId);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+/**
  * Get current (latest) ledger or create if none exists
  */
 const getCurrentLedger = async (req, res) => {
@@ -55,8 +112,9 @@ const openNextLedger = async (req, res) => {
       // Expect YYYY-MM-DD or YYYY-MM
       nextMonthStr = req.body.month.length === 7 ? `${req.body.month}-01` : req.body.month;
     } else {
-      const nextDate = new Date(currentLedger.month);
-      nextDate.setMonth(nextDate.getMonth() + 1);
+      // In UTC throughout, so no time zone can move the first of the month to the day before.
+      const [y, m] = String(currentLedger.month).slice(0, 7).split('-').map(Number);
+      const nextDate = new Date(Date.UTC(y, m, 1));
       nextMonthStr = nextDate.toISOString().split('T')[0];
     }
 
@@ -89,7 +147,7 @@ const addTransaction = async (req, res) => {
     const { ledger_id, type, description, amount, category } = req.body;
 
     // Validate input
-    if (!ledger_id || !type || !description || !amount) {
+    if (!ledger_id || !type || !String(description ?? '').trim() || amount === undefined || amount === null || amount === '') {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
@@ -97,36 +155,20 @@ const addTransaction = async (req, res) => {
       return res.status(400).json({ error: 'Invalid transaction type' });
     }
 
-    if (amount <= 0) {
-      return res.status(400).json({ error: 'Amount must be positive' });
-    }
+    const money = readAmount(amount);
+    if (money.error) return res.status(400).json({ error: money.error });
 
-    // Check if ledger exists and is open
-    const ledgerCheck = await pool.query(
-      'SELECT * FROM ledgers WHERE id = $1',
-      [ledger_id]
-    );
-
-    if (ledgerCheck.rows.length === 0) {
-      return res.status(404).json({ error: 'Ledger not found' });
-    }
-
-    if (ledgerCheck.rows[0].status === 'CLOSED') {
-      return res.status(400).json({ error: 'Cannot add transactions to closed ledger' });
-    }
-
-    // Add transaction
-    const result = await pool.query(
-      'INSERT INTO transactions (ledger_id, type, description, amount, category, created_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-      [ledger_id, type, description, parseFloat(amount), category, req.user.id]
-    );
-
-    // Update ledger totals
-    await updateLedgerTotals(ledger_id);
+    const transaction = await onOpenLedger(ledger_id, res, 'Cannot add transactions to closed ledger', async (client) => (
+      (await client.query(
+        'INSERT INTO transactions (ledger_id, type, description, amount, category, created_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+        [ledger_id, type, String(description).trim(), money.value, category || null, req.user.id]
+      )).rows[0]
+    ));
+    if (!transaction) return;
 
     res.status(201).json({
       message: 'Transaction added successfully',
-      transaction: result.rows[0],
+      transaction,
     });
   } catch (error) {
     console.error('Add transaction error:', error);
@@ -141,15 +183,13 @@ const deleteTransaction = async (req, res) => {
   try {
     const { ledger_id, id } = req.params;
 
-    const ledgerCheck = await pool.query('SELECT * FROM ledgers WHERE id = $1', [ledger_id]);
-    if (ledgerCheck.rows.length === 0) return res.status(404).json({ error: 'Ledger not found' });
-    if (ledgerCheck.rows[0].status === 'CLOSED') return res.status(400).json({ error: 'Cannot delete from closed ledger' });
-
-    const result = await pool.query('DELETE FROM transactions WHERE id = $1 AND ledger_id = $2 RETURNING *', [id, ledger_id]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Transaction not found' });
-
-    await updateLedgerTotals(ledger_id);
-    res.json({ message: 'Transaction deleted successfully', transaction: result.rows[0] });
+    const transaction = await onOpenLedger(ledger_id, res, 'Cannot delete from closed ledger', async (client) => {
+      const { rows: [t] } = await client.query('DELETE FROM transactions WHERE id = $1 AND ledger_id = $2 RETURNING *', [id, ledger_id]);
+      if (!t) { res.status(404).json({ error: 'Transaction not found' }); return undefined; }
+      return t;
+    });
+    if (!transaction) return;
+    res.json({ message: 'Transaction deleted successfully', transaction });
   } catch (error) {
     console.error('Delete transaction error:', error);
     res.status(500).json({ error: 'Failed to delete transaction' });
@@ -164,28 +204,34 @@ const updateTransaction = async (req, res) => {
     const { ledger_id, id } = req.params;
     const { type, description, amount, category } = req.body;
 
-    const ledgerCheck = await pool.query('SELECT * FROM ledgers WHERE id = $1', [ledger_id]);
-    if (ledgerCheck.rows.length === 0) return res.status(404).json({ error: 'Ledger not found' });
-    if (ledgerCheck.rows[0].status === 'CLOSED') return res.status(400).json({ error: 'Cannot edit transactions on a closed ledger' });
-
-    if (amount !== undefined && parseFloat(amount) <= 0) {
-      return res.status(400).json({ error: 'Amount must be positive' });
+    if (type !== undefined && !['INCOME', 'EXPENSE'].includes(type)) {
+      return res.status(400).json({ error: 'Invalid transaction type' });
+    }
+    if (description !== undefined && !String(description ?? '').trim()) {
+      return res.status(400).json({ error: 'Description cannot be empty' });
+    }
+    let money = { value: null };
+    if (amount !== undefined) {
+      money = readAmount(amount);
+      if (money.error) return res.status(400).json({ error: money.error });
     }
 
-    const result = await pool.query(
-      `UPDATE transactions
-         SET type = COALESCE($1, type),
-             description = COALESCE($2, description),
-             amount = COALESCE($3, amount),
-             category = COALESCE($4, category)
-       WHERE id = $5 AND ledger_id = $6
-       RETURNING *`,
-      [type, description, amount ? parseFloat(amount) : null, category ?? null, id, ledger_id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Transaction not found' });
-
-    await updateLedgerTotals(ledger_id);
-    res.json({ message: 'Transaction updated successfully', transaction: result.rows[0] });
+    const transaction = await onOpenLedger(ledger_id, res, 'Cannot edit transactions on a closed ledger', async (client) => {
+      const { rows: [t] } = await client.query(
+        `UPDATE transactions
+           SET type = COALESCE($1, type),
+               description = COALESCE($2, description),
+               amount = COALESCE($3, amount),
+               category = COALESCE($4, category)
+         WHERE id = $5 AND ledger_id = $6
+         RETURNING *`,
+        [type ?? null, description !== undefined ? String(description).trim() : null, money.value, category ?? null, id, ledger_id]
+      );
+      if (!t) { res.status(404).json({ error: 'Transaction not found' }); return undefined; }
+      return t;
+    });
+    if (!transaction) return;
+    res.json({ message: 'Transaction updated successfully', transaction });
   } catch (error) {
     console.error('Update transaction error:', error);
     res.status(500).json({ error: 'Failed to update transaction' });
@@ -218,28 +264,7 @@ const getTransactions = async (req, res) => {
 /**
  * Update ledger totals (recalculate from transactions)
  */
-const updateLedgerTotals = async (ledger_id) => {
-  try {
-    const result = await pool.query(
-      `SELECT 
-        COALESCE(SUM(CASE WHEN type = 'INCOME' THEN amount ELSE 0 END), 0) as total_income,
-        COALESCE(SUM(CASE WHEN type = 'EXPENSE' THEN amount ELSE 0 END), 0) as total_expense
-       FROM transactions
-       WHERE ledger_id = $1`,
-      [ledger_id]
-    );
-
-    const { total_income, total_expense } = result.rows[0];
-    const net_profit = total_income - total_expense;
-
-    await pool.query(
-      'UPDATE ledgers SET total_income = $1, total_expense = $2, net_profit = $3 WHERE id = $4',
-      [total_income, total_expense, net_profit, ledger_id]
-    );
-  } catch (error) {
-    console.error('Update ledger totals error:', error);
-  }
-};
+const updateLedgerTotals = (ledger_id) => recomputeTotals(pool, ledger_id);
 
 /**
  * Close ledger and calculate profit distribution (admin only)
@@ -508,7 +533,16 @@ const updateLedger = async (req, res) => {
     const fields = [];
     const values = [];
     let idx = 1;
-    if (month !== undefined) { fields.push(`month = $${idx}::date`); values.push(month); idx++; }
+    if (month !== undefined) {
+      // A month, as YYYY-MM or YYYY-MM-DD, stored as its first day - and never one another ledger
+      // already has (opening the next month refused that; editing a month did not).
+      const m = /^(\d{4})-(\d{2})(?:-\d{2})?$/.exec(String(month));
+      if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) return res.status(400).json({ error: 'Choose a month, as YYYY-MM.' });
+      const first = `${m[1]}-${m[2]}-01`;
+      const taken = await pool.query('SELECT id FROM ledgers WHERE month = $1::date AND id <> $2', [first, id]);
+      if (taken.rows.length) return res.status(400).json({ error: 'A ledger for this month already exists.' });
+      fields.push(`month = $${idx}::date`); values.push(first); idx++;
+    }
     if (label !== undefined) { fields.push(`label = $${idx}`);        values.push(label || null); idx++; }
     if (fields.length === 0) return res.status(400).json({ error: 'Nothing to update.' });
     values.push(id);
@@ -519,6 +553,7 @@ const updateLedger = async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ error: 'Ledger not found.' });
     res.json(result.rows[0]);
   } catch (error) {
+    if (error.code === '23505') return res.status(400).json({ error: 'A ledger for this month already exists.' });
     console.error('Update ledger error:', error);
     res.status(500).json({ error: 'Failed to update ledger.' });
   }
@@ -560,4 +595,5 @@ module.exports = {
   getAnalytics,
   updateLedger,
   deleteLedger,
+  readAmount,
 };
