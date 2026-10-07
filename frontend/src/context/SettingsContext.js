@@ -1,14 +1,18 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import api from '../services/api';
+import { useAuth } from './AuthContext';
 
 const SettingsContext = createContext(null);
 
+const DEFAULTS = {
+  currency_code: 'USD',
+  currency_symbol: '$',
+  currency_name: 'US Dollar'
+};
+
 export const SettingsProvider = ({ children }) => {
-  const [settings, setSettings] = useState({
-    currency_code: 'USD',
-    currency_symbol: '$',
-    currency_name: 'US Dollar'
-  });
+  const { user } = useAuth();
+  const [settings, setSettings] = useState(DEFAULTS);
   const [loading, setLoading] = useState(true);
 
   const fetchSettings = useCallback(async () => {
@@ -24,16 +28,20 @@ export const SettingsProvider = ({ children }) => {
     }
   }, []);
 
+  // Loaded whenever somebody signs in, not only when the app first opens. Opened on the login
+  // page there was no token yet, so nothing was loaded, and after signing in the app showed the
+  // built-in US Dollar instead of the saved currency - which looked like the currency "changing
+  // back" every time anybody logged out and in again. Signing out resets to the defaults, so one
+  // person's settings never sit on screen for the next.
   useEffect(() => {
-    // Only fetch if authenticated (api will handle this implicitly, or we just fail gracefully)
-    // Actually, it's better to let components trigger this, or just fetch it once on load.
-    const token = localStorage.getItem('token');
-    if (token) {
+    if (user?.id) {
+      setLoading(true);
       fetchSettings();
     } else {
+      setSettings(DEFAULTS);
       setLoading(false);
     }
-  }, [fetchSettings]);
+  }, [user?.id, fetchSettings]);
 
   const updateSettings = async (newSettings) => {
     try {

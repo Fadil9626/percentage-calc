@@ -11,9 +11,16 @@ const DEFAULT_CATEGORIES = [
   { name: 'Other Expense', type: 'EXPENSE' },
 ];
 
+/**
+ * There is meant to be one settings row. Reading and saving both used "LIMIT 1" with no order, so if
+ * a second row ever existed the save could change one row and the next read return the other -
+ * the currency "changing back". Both now take the same row: the most recently saved.
+ */
+const THE_ROW = 'ORDER BY updated_at DESC NULLS LAST, id LIMIT 1';
+
 const getSettings = async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM settings LIMIT 1');
+    const result = await pool.query(`SELECT * FROM settings ${THE_ROW}`);
     const row = result.rows[0] || {};
     if (!row.categories) row.categories = DEFAULT_CATEGORIES;
     res.json(row);
@@ -26,7 +33,7 @@ const getSettings = async (req, res) => {
 const updateSettings = async (req, res) => {
   try {
     const { currency_code, currency_symbol, currency_name, categories } = req.body;
-    const current = await pool.query('SELECT id FROM settings LIMIT 1');
+    const current = await pool.query(`SELECT id FROM settings ${THE_ROW}`);
 
     if (current.rows.length === 0) {
       const result = await pool.query(
