@@ -28,17 +28,19 @@ module.exports = {
     {
       name: 'perc-calc-frontend',
       cwd: path.join(root, 'frontend'),
-      script: 'cmd',
-      args: '/c npm start',
+      // Serve the production build via a tiny zero-dep Node server (serve.js).
+      // Avoids the Windows `cmd /c npm start` issue that opened a console window
+      // and died when that window was closed. Run `npm run build` after frontend
+      // changes, then `pm2 restart perc-calc-frontend`.
+      script: 'serve.js',
+      interpreter: 'node',
       exec_mode: 'fork',
       watch: false,
       instances: 1,
-      autorestart: false,
+      autorestart: true,
       env: {
         PORT: '3030',
-        BROWSER: 'none',
-        CI: 'false',
-        NODE_ENV: 'development',
+        NODE_ENV: 'production',
       },
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
     },
