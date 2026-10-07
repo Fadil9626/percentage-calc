@@ -31,8 +31,16 @@ const TYPES = {
   '.txt':  'text/plain; charset=utf-8',
 };
 
+// Basic protections for every answer: no framing (clickjacking), no type guessing, no referrer
+// leaking to other sites.
+const SECURITY = {
+  'X-Frame-Options': 'DENY',
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'same-origin',
+};
+
 function send(res, status, body, headers = {}) {
-  res.writeHead(status, headers);
+  res.writeHead(status, { ...SECURITY, ...headers });
   res.end(body);
 }
 
@@ -44,9 +52,12 @@ const server = http.createServer((req, res) => {
   catch { return send(res, 400, 'Bad request'); }
   if (urlPath === '/') urlPath = '/index.html';
 
-  // Resolve safely inside ROOT (block path traversal).
+  // Resolve safely inside ROOT (block path traversal). Compared with the separator, or a sibling
+  // folder whose name merely starts with "build" (build-old, ...) would count as inside.
   const filePath = path.normalize(path.join(ROOT, urlPath));
-  if (!filePath.startsWith(ROOT)) return send(res, 403, 'Forbidden');
+  if (filePath !== ROOT && !filePath.startsWith(ROOT + path.sep)) return send(res, 403, 'Forbidden');
+  // Source maps would hand anyone the app's full source; they stay on this machine.
+  if (filePath.endsWith('.map')) return send(res, 404, 'Not found');
 
   fs.readFile(filePath, (err, data) => {
     if (!err) {

@@ -1,4 +1,3 @@
-const { v4: uuidv4 } = require('uuid');
 const { calculateDistribution, validateShares } = require('../utils/distribution');
 const pool = require('../config/database');
 const { mayUse, ledgerFor } = require('../utils/branches');

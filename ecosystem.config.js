@@ -20,7 +20,6 @@ module.exports = {
         DB_USER: 'rbac_user',
         DB_PASSWORD: 'rbac_password',
         DB_NAME: 'percentage_calc',
-        JWT_SECRET: 'your-secret-key-change-in-production',
         CORS_ORIGIN: 'http://localhost:3030',
       },
       log_date_format: 'YYYY-MM-DD HH:mm:ss',

@@ -10,7 +10,8 @@ services:
       POSTGRES_PASSWORD: rbac_password
       POSTGRES_DB: percentage_calc
     ports:
-      - "5440:5432"
+      # This machine only: with the default password, an open port let anyone on the network in.
+      - "127.0.0.1:5440:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/database/init.sql:/docker-entrypoint-initdb.d/01_init.sql

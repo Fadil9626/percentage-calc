@@ -19,15 +19,11 @@ const login = async (req, res) => {
       [email]
     );
 
-    if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'Invalid email or password' });
-    }
-
+    // An unknown email still costs a bcrypt check, so the answer time does not tell an attacker
+    // which emails have accounts.
     const user = result.rows[0];
-
-    // Verify password
-    const passwordMatch = await bcrypt.compare(password, user.password_hash);
-    if (!passwordMatch) {
+    const passwordMatch = await bcrypt.compare(String(password), user ? user.password_hash : DUMMY_HASH);
+    if (!user || !passwordMatch) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
@@ -78,6 +74,9 @@ const createUser = async (req, res) => {
       return res.status(400).json({ error: 'Email, password, name, and role required' });
     }
 
+    const pwWhy = passwordProblem(password);
+    if (pwWhy) return res.status(400).json({ error: pwWhy });
+
     // Validate role
     const validRoles = ['ADMIN', 'PARTNER', 'DATA_ENTRY'];
     if (!validRoles.includes(role)) {
@@ -120,6 +119,16 @@ const createUser = async (req, res) => {
  */
 // The same three the Users screen offers (PARTNER was left out here, so changing anyone to it failed).
 const ROLES = ['ADMIN', 'PARTNER', 'DATA_ENTRY'];
+
+// Compared against when the email is unknown (a hash of nothing anyone can type).
+const DUMMY_HASH = bcrypt.hashSync(require('crypto').randomBytes(16).toString('hex'), 10);
+
+/** A new password: long enough to resist guessing, short enough for bcrypt (72 bytes). */
+const passwordProblem = (pw) => {
+  if (typeof pw !== 'string' || pw.length < 8) return 'Use a password of at least 8 characters.';
+  if (Buffer.byteLength(pw) > 72) return 'Keep the password under 72 characters.';
+  return null;
+};
 
 /**
  * Give a user exactly these branches. Checked first: every id must be a real branch, and a

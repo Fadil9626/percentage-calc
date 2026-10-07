@@ -1,7 +1,8 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+// Checked (or made for this run) in index.js before anything loads this file.
+const JWT_SECRET = process.env.JWT_SECRET;
 
 /**
  * Middleware to authenticate JWT token from Authorization header
