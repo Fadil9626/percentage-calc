@@ -3,6 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useBranch } from '../context/BranchContext';
+import FullScreenButton from './FullScreenButton';
 
 /* ── Icon helpers ─────────────────────────────────────────── */
 const Icon = ({ d, cls = '' }) => (
@@ -125,6 +126,7 @@ const Layout = ({ children, title, subtitle }) => {
             {subtitle && <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{subtitle}</p>}
           </div>
           <div className="flex items-center gap-3">
+          <FullScreenButton className="hidden sm:inline-flex p-2 rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200 transition-colors" />
           {/* The branch everything on screen belongs to. One branch: just its name. */}
           {branches.length > 1 ? (
             <label className="flex items-center gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
